@@ -1,0 +1,189 @@
+{
+  "entities": {
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Global store configuration and payment settings",
+      "type": "object",
+      "properties": {
+        "websiteName": { "type": "string" },
+        "logoText": { "type": "string" },
+        "upiId": { "type": "string" },
+        "upiQrUrl": { "type": "string" },
+        "supportEmail": { "type": "string" },
+        "telegramLink": { "type": "string" },
+        "whatsappLink": { "type": "string" },
+        "paymentInstructions": { "type": "string" },
+        "maintenanceMode": { "type": "boolean" },
+        "announcementBanner": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Category": {
+      "title": "Category",
+      "description": "App category categorization",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "active": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "ApkItem": {
+      "title": "ApkItem",
+      "description": "Android APK listing record",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "category": { "type": "string" },
+        "version": { "type": "string" },
+        "size": { "type": "string" },
+        "developer": { "type": "string" },
+        "icon": { "type": "string" },
+        "banner": { "type": "string" },
+        "shortDescription": { "type": "string" },
+        "description": { "type": "string" },
+        "modFeatures": { "type": "string" },
+        "downloadUrl": { "type": "string" },
+        "isVip": { "type": "boolean" },
+        "isFree": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "downloadsCount": { "type": "number" },
+        "rating": { "type": "number" },
+        "tags": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "PlanItem": {
+      "title": "PlanItem",
+      "description": "Access duration plan for an APK",
+      "type": "object",
+      "properties": {
+        "apkId": { "type": "string" },
+        "name": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "price": { "type": "number" },
+        "originalPrice": { "type": "number" },
+        "active": { "type": "boolean" },
+        "description": { "type": "string" }
+      }
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount promo coupon code",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "discountPercent": { "type": "number" },
+        "active": { "type": "boolean" },
+        "maxDiscount": { "type": "number" },
+        "minPurchase": { "type": "number" },
+        "usageLimit": { "type": "number" },
+        "usedCount": { "type": "number" },
+        "perUserLimit": { "type": "number" },
+        "startDate": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order purchase transaction",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userName": { "type": "string" },
+        "apkId": { "type": "string" },
+        "apkName": { "type": "string" },
+        "apkIcon": { "type": "string" },
+        "planId": { "type": "string" },
+        "planName": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "basePrice": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "finalPrice": { "type": "number" },
+        "couponCode": { "type": "string" },
+        "utr": { "type": "string" },
+        "screenshotUrl": { "type": "string" },
+        "status": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Active APK subscription entitlement",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "apkId": { "type": "string" },
+        "apkName": { "type": "string" },
+        "apkIcon": { "type": "string" },
+        "planName": { "type": "string" },
+        "durationDays": { "type": "number" },
+        "startDate": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "status": { "type": "string" },
+        "downloadUrl": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile document",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/settings/{settingsId}": {
+      "schema": "StoreSettings",
+      "description": "Global settings path"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Categories list"
+    },
+    "/apks/{apkId}": {
+      "schema": "ApkItem",
+      "description": "APKs catalog"
+    },
+    "/plans/{planId}": {
+      "schema": "PlanItem",
+      "description": "Pricing plans"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Discount coupons"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Order records"
+    },
+    "/purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "User purchases entitlements"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User account profiles"
+    }
+  }
+}
