@@ -105,53 +105,32 @@ export const AuthErrorModal: React.FC = () => {
               </p>
             </div>
 
-            {/* Instant Bypass Options */}
+            {/* Email Login Fallback */}
             <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4 space-y-3">
               <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
-                <Sparkles className="w-4 h-4" /> Direct Developer / Fast Login Options
+                <Mail className="w-4 h-4" /> Sign In with Email
               </div>
               <p className="text-[11px] text-zinc-400">
-                You can instantly log in right now as the Admin or using any email address to test and manage the app:
+                You can log in using your email address while configuring domain authorization in Firebase Console:
               </p>
 
-              <div className="space-y-2 pt-1">
+              <form onSubmit={handleCustomEmailSubmit} className="flex gap-2 pt-1">
+                <input
+                  type="email"
+                  placeholder="Enter your email address..."
+                  value={customEmail}
+                  onChange={(e) => setCustomEmail(e.target.value)}
+                  required
+                  className="flex-1 bg-zinc-950 text-white text-xs px-3 py-2.5 rounded-xl border border-zinc-700 outline-none focus:border-amber-500"
+                />
                 <button
-                  id="btn-dev-admin-login"
-                  onClick={handleDevAdminLogin}
+                  type="submit"
                   disabled={loadingDev}
-                  className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black text-xs py-3 rounded-xl shadow-lg transition flex items-center justify-center gap-2"
+                  className="bg-amber-500 text-zinc-950 font-bold text-xs px-4 py-2.5 rounded-xl hover:bg-amber-400 transition"
                 >
-                  <KeyRound className="w-4 h-4" /> Quick Sign In as Admin (akashbehera599@gmail.com)
+                  Sign In
                 </button>
-
-                {!showEmailInput ? (
-                  <button
-                    id="btn-show-email-login"
-                    onClick={() => setShowEmailInput(true)}
-                    className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs py-2.5 rounded-xl transition flex items-center justify-center gap-2"
-                  >
-                    <Mail className="w-3.5 h-3.5 text-zinc-400" /> Sign In with Custom Email
-                  </button>
-                ) : (
-                  <form onSubmit={handleCustomEmailSubmit} className="flex gap-2 pt-1">
-                    <input
-                      type="email"
-                      placeholder="Enter your email address..."
-                      value={customEmail}
-                      onChange={(e) => setCustomEmail(e.target.value)}
-                      required
-                      className="flex-1 bg-zinc-950 text-white text-xs px-3 py-2.5 rounded-xl border border-zinc-700 outline-none focus:border-amber-500"
-                    />
-                    <button
-                      type="submit"
-                      disabled={loadingDev}
-                      className="bg-amber-500 text-zinc-950 font-bold text-xs px-4 py-2.5 rounded-xl hover:bg-amber-400 transition"
-                    >
-                      Login
-                    </button>
-                  </form>
-                )}
-              </div>
+              </form>
             </div>
           </div>
         ) : (

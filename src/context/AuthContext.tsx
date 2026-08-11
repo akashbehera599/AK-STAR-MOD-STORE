@@ -109,6 +109,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+        // User closed the popup window, treat gracefully as cancellation without error modal
+        console.info('Sign-in popup closed by user.');
+        return;
+      }
+      
       console.error('Google Sign In Error:', error);
       if (error.code === 'auth/popup-blocked') {
         try {
@@ -117,8 +123,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (redirectErr: any) {
           setAuthError('Popup was blocked and redirect failed. Please allow popups for login.');
         }
-      } else if (error.code === 'auth/popup-closed-by-user') {
-        setAuthError('Sign-in cancelled. Please try again.');
       } else if (error.code === 'auth/unauthorized-domain') {
         setIsUnauthorizedDomainError(true);
         setAuthError(`Domain "${currentDomain}" is not authorized in Firebase Console.`);

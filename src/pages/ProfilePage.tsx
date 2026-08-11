@@ -59,21 +59,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
             <span className="bg-zinc-900 px-3 text-[10px] text-zinc-500 uppercase font-bold absolute">OR</span>
           </div>
 
-          <button
-            id="btn-profile-quick-admin-login"
-            onClick={() => signInWithDevAccount('akashbehera599@gmail.com', 'Akash Behera (Admin)')}
-            className="w-full bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold text-xs py-3 rounded-2xl border border-amber-500/20 transition flex items-center justify-center gap-2"
-          >
-            <Sparkles className="w-4 h-4 text-amber-400" /> Quick Sign In as Admin (akashbehera599@gmail.com)
-          </button>
-
           {!showEmailForm ? (
             <button
               id="btn-profile-toggle-email-login"
               onClick={() => setShowEmailForm(true)}
-              className="text-xs text-zinc-400 hover:text-zinc-200 transition font-medium"
+              className="w-full bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 font-bold text-xs py-3 rounded-2xl border border-zinc-700/50 transition"
             >
-              Sign in with custom email address →
+              Sign in with Email
             </button>
           ) : (
             <form 

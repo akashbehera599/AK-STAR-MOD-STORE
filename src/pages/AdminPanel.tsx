@@ -9,6 +9,7 @@ import { isAdminEmail } from '../lib/admin';
 import { 
   ApkItem, Category, Coupon, Order, PlanItem, StoreSettings, UserProfile 
 } from '../types';
+import { AdminApkModal } from '../components/AdminApkModal';
 import { 
   addApk, addCategory, addCoupon, addPlan, approveOrder, 
   deleteApk, deleteCategory, deleteCoupon, deletePlan, getPlansForApk,
@@ -113,9 +114,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
   const totalRevenue = approvedOrders.reduce((acc, o) => acc + (o.finalPrice || 0), 0);
 
   // APK Save Handler
-  const handleSaveApk = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingApk?.name || !editingApk?.category) {
+  const handleSaveApk = async (apkPayload: Partial<ApkItem>) => {
+    if (!apkPayload.name || !apkPayload.category) {
       alert('APK Name and Category are required');
       return;
     }
@@ -123,30 +123,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
     setLoadingAction(true);
     try {
       const data: Omit<ApkItem, 'id'> = {
-        name: editingApk.name,
-        slug: editingApk.slug || editingApk.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        description: editingApk.description || '',
-        shortDescription: editingApk.shortDescription || '',
-        category: editingApk.category,
-        version: editingApk.version || '1.0.0',
-        androidVersion: editingApk.androidVersion || '7.0+',
-        size: editingApk.size || '45 MB',
-        icon: editingApk.icon || '',
-        screenshots: editingApk.screenshots || [],
-        features: editingApk.features || ['Premium Unlocked', 'No Ads'],
-        changelog: editingApk.changelog || 'Initial release',
-        isFree: !!editingApk.isFree,
-        isPremium: !editingApk.isFree,
-        isFeatured: !!editingApk.isFeatured,
-        isActive: editingApk.isActive !== undefined ? editingApk.isActive : true,
-        rating: editingApk.rating || 4.8,
-        downloadsCount: editingApk.downloadsCount || 100,
-        downloadUrl: editingApk.downloadUrl || '',
-        createdAt: editingApk.createdAt || new Date().toISOString(),
+        name: apkPayload.name.trim(),
+        slug: apkPayload.slug || apkPayload.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        description: apkPayload.description || '',
+        shortDescription: apkPayload.shortDescription || '',
+        category: apkPayload.category,
+        categoryId: apkPayload.categoryId || '',
+        categoryName: apkPayload.categoryName || apkPayload.category,
+        version: apkPayload.version || '1.0.0',
+        androidVersion: apkPayload.androidVersion || '7.0+',
+        size: apkPayload.size || '45 MB',
+        icon: apkPayload.icon || apkPayload.iconUrl || '',
+        iconUrl: apkPayload.iconUrl || apkPayload.icon || '',
+        screenshots: apkPayload.screenshots || apkPayload.screenshotUrls || [],
+        screenshotUrls: apkPayload.screenshotUrls || apkPayload.screenshots || [],
+        features: apkPayload.features || ['Premium Unlocked', 'No Ads'],
+        changelog: apkPayload.changelog || 'Initial release',
+        downloadMethod: apkPayload.downloadMethod || 'upload',
+        apkFilePath: apkPayload.apkFilePath || '',
+        apkFileName: apkPayload.apkFileName || '',
+        apkFileSize: apkPayload.apkFileSize || '',
+        externalDownloadUrl: apkPayload.externalDownloadUrl || '',
+        downloadUrl: apkPayload.downloadUrl || '',
+        isFree: !!apkPayload.isFree,
+        isPremium: !apkPayload.isFree,
+        isFeatured: !!apkPayload.isFeatured,
+        isActive: apkPayload.isActive !== undefined ? apkPayload.isActive : true,
+        rating: apkPayload.rating || 4.8,
+        downloadsCount: apkPayload.downloadsCount || 100,
+        createdAt: editingApk?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
 
-      if (editingApk.id) {
+      if (editingApk?.id) {
         await updateApk(editingApk.id, data);
       } else {
         await addApk(data);
@@ -778,123 +787,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
       )}
 
       {/* APK EDIT / ADD MODAL */}
-      {showApkModal && editingApk && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <form onSubmit={handleSaveApk} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-base font-extrabold text-white">
-              {editingApk.id ? 'Edit APK' : 'Add New APK'}
-            </h3>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="text-zinc-400">APK Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingApk.name || ''}
-                  onChange={(e) => setEditingApk({ ...editingApk, name: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-zinc-400">Category *</label>
-                  <select
-                    value={editingApk.category || ''}
-                    onChange={(e) => setEditingApk({ ...editingApk, category: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
-                  >
-                    {categories.map(c => (
-                      <option key={c.id} value={c.name}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-zinc-400">Version</label>
-                  <input
-                    type="text"
-                    value={editingApk.version || '1.0.0'}
-                    onChange={(e) => setEditingApk({ ...editingApk, version: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-zinc-400">Icon Image URL</label>
-                <input
-                  type="text"
-                  placeholder="https://..."
-                  value={editingApk.icon || ''}
-                  onChange={(e) => setEditingApk({ ...editingApk, icon: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-zinc-400">Direct Download APK Link</label>
-                <input
-                  type="text"
-                  placeholder="https://..."
-                  value={editingApk.downloadUrl || ''}
-                  onChange={(e) => setEditingApk({ ...editingApk, downloadUrl: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
-                />
-              </div>
-
-              <div>
-                <label className="text-zinc-400">Description</label>
-                <textarea
-                  rows={3}
-                  value={editingApk.description || ''}
-                  onChange={(e) => setEditingApk({ ...editingApk, description: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
-                />
-              </div>
-
-              <div className="flex gap-4 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!editingApk.isFree}
-                    onChange={(e) => setEditingApk({ ...editingApk, isFree: e.target.checked })}
-                    className="accent-amber-500"
-                  />
-                  <span>Is Free Download</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!editingApk.isFeatured}
-                    onChange={(e) => setEditingApk({ ...editingApk, isFeatured: e.target.checked })}
-                    className="accent-amber-500"
-                  />
-                  <span>Featured VIP Badge</span>
-                </label>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowApkModal(false)}
-                className="w-1/3 bg-zinc-800 text-zinc-300 font-bold text-xs py-2.5 rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={loadingAction}
-                className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs py-2.5 rounded-xl shadow"
-              >
-                Save APK
-              </button>
-            </div>
-          </form>
-        </div>
+      {showApkModal && (
+        <AdminApkModal
+          editingApk={editingApk}
+          categories={categories}
+          onClose={() => {
+            setShowApkModal(false);
+            setEditingApk(null);
+          }}
+          onSave={handleSaveApk}
+        />
       )}
 
       {/* PLAN MANAGER MODAL FOR SELECTED APK */}

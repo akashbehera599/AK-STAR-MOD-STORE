@@ -21,25 +21,36 @@ export interface Category {
 
 export interface ApkItem {
   id: string;
-  name: string;
+  name: string; // Title
   slug: string;
   description: string;
   shortDescription?: string;
-  category: string;
+  category: string; // categoryName
+  categoryId?: string;
+  categoryName?: string;
   version: string;
   androidVersion: string;
   size: string;
-  icon: string;
-  screenshots: string[];
+  icon: string; // iconUrl
+  iconUrl?: string;
+  screenshots: string[]; // screenshotUrls
+  screenshotUrls?: string[];
   features: string[];
   changelog: string;
+  
+  downloadMethod?: 'upload' | 'external';
+  apkFilePath?: string;
+  apkFileName?: string;
+  apkFileSize?: string;
+  externalDownloadUrl?: string;
+  downloadUrl?: string; // Unified download link for customers
+
   isFree: boolean;
   isPremium: boolean;
   isFeatured: boolean;
   isActive: boolean;
   rating: number; // e.g. 4.8
   downloadsCount: number;
-  downloadUrl?: string; // Direct APK link or file download URL
   tags?: string[];
   createdAt: string;
   updatedAt: string;
