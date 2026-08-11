@@ -74,10 +74,11 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
   const [newCategoryName, setNewCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
 
-  // File Input Refs
+  // File Input & Form Container Refs
   const iconFileInputRef = useRef<HTMLInputElement>(null);
   const apkFileInputRef = useRef<HTMLInputElement>(null);
   const screenshotsFileInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   // Icon File Handler
   const handleIconSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -258,27 +259,31 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
     e.preventDefault();
     setUploadError(null);
 
+    const showError = (msg: string) => {
+      setUploadError(msg);
+      if (formRef.current) {
+        formRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+
     if (!formData.name?.trim()) {
-      setUploadError('APK Name is required.');
+      showError('APK Name is required.');
       return;
     }
 
     if (!formData.category) {
-      setUploadError('Please select a category.');
+      showError('Please select a category.');
       return;
     }
 
     // Download Method Validation
     if (formData.downloadMethod === 'external') {
-      const val = validateExternalUrl(formData.externalDownloadUrl || '');
-      if (!val.valid) {
-        setUploadError(val.error || 'Invalid external download URL');
-        return;
-      }
-    } else {
-      if (!formData.apkFilePath && !formData.downloadUrl) {
-        setUploadError('Please upload an APK file or switch to External Download Link.');
-        return;
+      if (formData.externalDownloadUrl?.trim()) {
+        const val = validateExternalUrl(formData.externalDownloadUrl);
+        if (!val.valid) {
+          showError(val.error || 'Invalid external download URL');
+          return;
+        }
       }
     }
 
@@ -291,8 +296,8 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
     const finalIcon = formData.icon || formData.iconUrl || '';
     const finalScreenshots = formData.screenshots || formData.screenshotUrls || [];
     const finalDownloadUrl = formData.downloadMethod === 'external'
-      ? (formData.externalDownloadUrl || '')
-      : (formData.apkFilePath || formData.downloadUrl || '');
+      ? (formData.externalDownloadUrl?.trim() || formData.downloadUrl || '')
+      : (formData.apkFilePath || formData.downloadUrl || formData.externalDownloadUrl || '');
 
     const finalCategoryName = formData.category || formData.categoryName || 'Games';
     const selectedCatObj = categories.find(c => c.name === finalCategoryName);
@@ -327,7 +332,7 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
     try {
       await onSave(payload);
     } catch (err: any) {
-      setUploadError('Save failed: ' + (err.message || String(err)));
+      showError('Save failed: ' + (err.message || String(err)));
     } finally {
       setSaving(false);
     }
@@ -363,7 +368,7 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs">
+        <form ref={formRef} onSubmit={handleSubmit} className="p-4 sm:p-6 overflow-y-auto space-y-5 text-xs">
           
           {/* Top Error Alert */}
           {uploadError && (

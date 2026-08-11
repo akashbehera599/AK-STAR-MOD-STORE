@@ -43,28 +43,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const adminStatus = isAdminEmail(currentUser.email);
         setIsAdmin(adminStatus);
 
+        const fallbackProfile: UserProfile = {
+          uid: currentUser.uid,
+          email: currentUser.email || '',
+          displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+          photoURL: currentUser.photoURL || undefined,
+          role: adminStatus ? 'admin' : 'user',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
         try {
           const userRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDoc(userRef);
+          let userSnap;
+          try {
+            userSnap = await getDoc(userRef);
+          } catch (getErr: any) {
+            console.warn('Could not fetch profile from Firestore (offline or connection):', getErr?.message || getErr);
+          }
 
           const profileData: UserProfile = {
-            uid: currentUser.uid,
-            email: currentUser.email || '',
-            displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
-            photoURL: currentUser.photoURL || undefined,
-            role: adminStatus ? 'admin' : 'user',
-            createdAt: userSnap.exists() ? userSnap.data().createdAt : new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            ...fallbackProfile,
+            createdAt: (userSnap && userSnap.exists()) ? userSnap.data().createdAt : fallbackProfile.createdAt,
           };
 
-          await setDoc(userRef, {
-            ...profileData,
-            lastLoginAt: serverTimestamp()
-          }, { merge: true });
-
           setUserProfile(profileData);
-        } catch (err) {
-          console.error('Error syncing user profile:', err);
+
+          try {
+            await setDoc(userRef, {
+              ...profileData,
+              lastLoginAt: serverTimestamp()
+            }, { merge: true });
+          } catch (setErr: any) {
+            console.warn('Could not update last login in Firestore:', setErr?.message || setErr);
+          }
+        } catch (err: any) {
+          console.warn('Error syncing user profile:', err?.message || err);
+          setUserProfile(fallbackProfile);
         }
       } else {
         // Check for local dev user session fallback
