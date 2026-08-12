@@ -150,6 +150,21 @@
         "updatedAt": { "type": "string" },
         "lastLoginAt": { "type": "string" }
       }
+    },
+    "ReviewItem": {
+      "title": "ReviewItem",
+      "description": "User app rating and review comment",
+      "type": "object",
+      "properties": {
+        "apkId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -184,6 +199,10 @@
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "User account profiles"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "ReviewItem",
+      "description": "App reviews and star ratings"
     }
   }
 }

@@ -139,7 +139,13 @@ export const MyAppsPage: React.FC<MyAppsPageProps> = ({ onSelectApk, onNavigateH
               {pendingOrders.map(order => (
                 <div key={order.id} className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <img src={order.apkIcon} alt={order.apkName} className="w-12 h-12 rounded-xl object-cover shrink-0 border border-amber-500/30" />
+                    {order.apkIcon && order.apkIcon.trim() !== '' ? (
+                      <img src={order.apkIcon} alt={order.apkName} className="w-12 h-12 rounded-xl object-cover shrink-0 border border-amber-500/30" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center font-bold text-amber-400 shrink-0">
+                        {order.apkName?.substring(0, 2).toUpperCase() || 'APK'}
+                      </div>
+                    )}
                     <div>
                       <h3 className="text-sm font-bold text-white">{order.apkName}</h3>
                       <p className="text-xs text-zinc-300">{order.planName} • ₹{order.finalPrice}</p>
@@ -169,7 +175,13 @@ export const MyAppsPage: React.FC<MyAppsPageProps> = ({ onSelectApk, onNavigateH
                 return (
                   <div key={p.id} className="bg-zinc-900/90 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
                     <div className="flex items-center gap-3">
-                      <img src={p.apkIcon} alt={p.apkName} className="w-12 h-12 rounded-xl object-cover shrink-0 border border-emerald-500/30" />
+                      {p.apkIcon && p.apkIcon.trim() !== '' ? (
+                        <img src={p.apkIcon} alt={p.apkName} className="w-12 h-12 rounded-xl object-cover shrink-0 border border-emerald-500/30" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center font-bold text-emerald-400 shrink-0">
+                          {p.apkName?.substring(0, 2).toUpperCase() || 'APK'}
+                        </div>
+                      )}
                       <div>
                         <div className="flex items-center gap-2">
                           <h3 className="text-sm font-bold text-white">{p.apkName}</h3>
@@ -205,7 +217,13 @@ export const MyAppsPage: React.FC<MyAppsPageProps> = ({ onSelectApk, onNavigateH
               {expiredPurchases.map(p => (
                 <div key={p.id} className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 opacity-70">
                   <div className="flex items-center gap-3">
-                    <img src={p.apkIcon} alt={p.apkName} className="w-12 h-12 rounded-xl object-cover shrink-0 grayscale" />
+                    {p.apkIcon && p.apkIcon.trim() !== '' ? (
+                      <img src={p.apkIcon} alt={p.apkName} className="w-12 h-12 rounded-xl object-cover shrink-0 grayscale" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center font-bold text-zinc-500 shrink-0">
+                        {p.apkName?.substring(0, 2).toUpperCase() || 'APK'}
+                      </div>
+                    )}
                     <div>
                       <h3 className="text-sm font-bold text-zinc-300">{p.apkName}</h3>
                       <p className="text-xs text-red-400 font-medium">

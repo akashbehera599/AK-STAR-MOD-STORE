@@ -7,6 +7,7 @@ interface SearchPageProps {
   apks: ApkItem[];
   initialQuery?: string;
   onSelectApk: (apk: ApkItem) => void;
+  onNavigate?: (tab: string) => void;
 }
 
 export const SearchPage: React.FC<SearchPageProps> = ({

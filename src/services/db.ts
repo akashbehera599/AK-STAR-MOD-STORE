@@ -15,6 +15,7 @@ import {
   Unsubscribe 
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { isAdminEmail } from '../lib/admin';
 import { 
   ApkItem, 
@@ -24,6 +25,7 @@ import {
   OrderStatus,
   PlanItem, 
   Purchase, 
+  ReviewItem,
   StoreSettings, 
   UserProfile 
 } from '../types';
@@ -52,6 +54,21 @@ export interface FirestoreErrorInfo {
       email?: string | null;
     }[];
   };
+}
+
+export function removeUndefinedFields<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  Object.keys(obj).forEach((key) => {
+    const val = obj[key];
+    if (val !== undefined) {
+      if (val && typeof val === 'object' && !Array.isArray(val) && !(val instanceof Date)) {
+        clean[key] = removeUndefinedFields(val);
+      } else {
+        clean[key] = val;
+      }
+    }
+  });
+  return clean as T;
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
@@ -150,10 +167,10 @@ export function subscribeStoreSettings(callback: (settings: StoreSettings) => vo
 
 export async function updateStoreSettings(data: Partial<StoreSettings>): Promise<void> {
   const settingsRef = doc(db, 'settings', 'store');
-  await setDoc(settingsRef, {
+  await setDoc(settingsRef, removeUndefinedFields({
     ...data,
     updatedAt: new Date().toISOString()
-  }, { merge: true });
+  }), { merge: true });
 }
 
 // ================= CATEGORIES =================
@@ -172,19 +189,20 @@ export function subscribeCategories(callback: (categories: Category[]) => void):
 }
 
 export async function addCategory(category: Omit<Category, 'id'>): Promise<string> {
-  const docRef = await addDoc(collection(db, 'categories'), {
+  const docRef = await addDoc(collection(db, 'categories'), removeUndefinedFields({
     ...category,
     createdAt: new Date().toISOString()
-  });
+  }));
   return docRef.id;
 }
 
 export async function updateCategory(id: string, category: Partial<Category>): Promise<void> {
   const docRef = doc(db, 'categories', id);
-  await updateDoc(docRef, {
-    ...category,
+  const { id: _, ...rest } = category;
+  await updateDoc(docRef, removeUndefinedFields({
+    ...rest,
     updatedAt: new Date().toISOString()
-  });
+  }));
 }
 
 export async function deleteCategory(id: string): Promise<void> {
@@ -240,20 +258,21 @@ export async function getApkBySlugOrId(identifier: string): Promise<ApkItem | nu
 
 export async function addApk(apk: Omit<ApkItem, 'id'>): Promise<string> {
   const now = new Date().toISOString();
-  const docRef = await addDoc(collection(db, 'apks'), {
+  const docRef = await addDoc(collection(db, 'apks'), removeUndefinedFields({
     ...apk,
     createdAt: now,
     updatedAt: now
-  });
+  }));
   return docRef.id;
 }
 
 export async function updateApk(id: string, apk: Partial<ApkItem>): Promise<void> {
   const docRef = doc(db, 'apks', id);
-  await updateDoc(docRef, {
-    ...apk,
+  const { id: _, ...rest } = apk;
+  await updateDoc(docRef, removeUndefinedFields({
+    ...rest,
     updatedAt: new Date().toISOString()
-  });
+  }));
 }
 
 export async function deleteApk(id: string): Promise<void> {
@@ -277,8 +296,7 @@ export async function deleteApk(id: string): Promise<void> {
 export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => void): Unsubscribe {
   const q = query(
     collection(db, 'plans'), 
-    where('apkId', '==', apkId),
-    where('active', '==', true)
+    where('apkId', '==', apkId)
   );
   return onSnapshot(q, (snap) => {
     const list: PlanItem[] = [];
@@ -306,16 +324,43 @@ export async function getPlansForApk(apkId: string): Promise<PlanItem[]> {
 }
 
 export async function addPlan(plan: Omit<PlanItem, 'id'>): Promise<string> {
-  const docRef = await addDoc(collection(db, 'plans'), plan);
+  const docRef = await addDoc(collection(db, 'plans'), removeUndefinedFields(plan));
   return docRef.id;
 }
 
 export async function updatePlan(id: string, plan: Partial<PlanItem>): Promise<void> {
-  await updateDoc(doc(db, 'plans', id), plan);
+  const { id: _, ...rest } = plan;
+  await updateDoc(doc(db, 'plans', id), removeUndefinedFields(rest));
 }
 
 export async function deletePlan(id: string): Promise<void> {
-  await deleteDoc(doc(db, 'plans', id));
+  if (!id || typeof id !== 'string' || id.trim() === '') {
+    throw new Error('Invalid plan ID provided for deletion.');
+  }
+
+  const cleanId = id.trim();
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase
+        .from('plans')
+        .delete()
+        .eq('id', cleanId);
+
+      if (error) {
+        console.warn('Supabase plan deletion note:', error.message || error);
+      }
+    } catch (sbErr) {
+      console.warn('Supabase delete plan exception:', sbErr);
+    }
+  }
+
+  try {
+    await deleteDoc(doc(db, 'plans', cleanId));
+  } catch (fsErr: any) {
+    console.error('Firestore delete plan error:', fsErr);
+    throw new Error(fsErr?.message || 'Failed to delete plan from database.');
+  }
 }
 
 // ================= COUPONS =================
@@ -408,21 +453,22 @@ export async function validateCoupon(code: string, amount: number, userId?: stri
 }
 
 export async function addCoupon(coupon: Omit<Coupon, 'id' | 'usedCount' | 'createdAt'>): Promise<string> {
-  const docRef = await addDoc(collection(db, 'coupons'), {
+  const docRef = await addDoc(collection(db, 'coupons'), removeUndefinedFields({
     ...coupon,
     code: coupon.code.toUpperCase().trim(),
     usedCount: 0,
     createdAt: new Date().toISOString()
-  });
+  }));
   return docRef.id;
 }
 
 export async function updateCoupon(id: string, coupon: Partial<Coupon>): Promise<void> {
-  const data: any = { ...coupon };
+  const { id: _, ...rest } = coupon;
+  const data: any = { ...rest };
   if (data.code) {
     data.code = data.code.toUpperCase().trim();
   }
-  await updateDoc(doc(db, 'coupons', id), data);
+  await updateDoc(doc(db, 'coupons', id), removeUndefinedFields(data));
 }
 
 export async function deleteCoupon(id: string): Promise<void> {
@@ -439,12 +485,12 @@ export async function createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'u
     status = 'COUPON_FREE';
   }
 
-  const newOrderDoc = await addDoc(collection(db, 'orders'), {
+  const newOrderDoc = await addDoc(collection(db, 'orders'), removeUndefinedFields({
     ...orderData,
     status,
     createdAt: now,
     updatedAt: now
-  });
+  }));
 
   const orderId = newOrderDoc.id;
 
@@ -476,14 +522,15 @@ export async function createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'u
   return { orderId, status };
 }
 
-export async function submitPaymentProof(orderId: string, utr: string, screenshotUrl: string): Promise<void> {
+export async function submitPaymentProof(orderId: string, utr: string, screenshotUrl: string, storagePath?: string): Promise<void> {
   const orderRef = doc(db, 'orders', orderId);
-  await updateDoc(orderRef, {
+  await updateDoc(orderRef, removeUndefinedFields({
     utr: utr.trim(),
     screenshotUrl: screenshotUrl.trim(),
+    screenshot_path: storagePath || screenshotUrl.trim(),
     status: 'PENDING',
     updatedAt: new Date().toISOString()
-  });
+  }));
 }
 
 export function subscribeUserOrders(userId: string, callback: (orders: Order[]) => void): Unsubscribe {
@@ -575,7 +622,7 @@ async function createPurchaseFromOrder(order: Order): Promise<string> {
     createdAt: startDate
   };
 
-  const docRef = await addDoc(collection(db, 'purchases'), purchaseData);
+  const docRef = await addDoc(collection(db, 'purchases'), removeUndefinedFields(purchaseData));
   return docRef.id;
 }
 
@@ -661,3 +708,101 @@ export function subscribeUsers(callback: (users: UserProfile[]) => void): Unsubs
     callback([]);
   });
 }
+
+// ================= REVIEWS & RATINGS =================
+export function subscribeApkReviews(apkId: string, callback: (reviews: ReviewItem[]) => void): Unsubscribe {
+  const q = query(collection(db, 'reviews'), where('apkId', '==', apkId));
+  return onSnapshot(q, (snap) => {
+    const list: ReviewItem[] = [];
+    snap.forEach((docSnap) => {
+      list.push({ id: docSnap.id, ...docSnap.data() } as ReviewItem);
+    });
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(list);
+  }, (err) => {
+    console.error('Subscribe reviews error:', err);
+    callback([]);
+  });
+}
+
+export async function recalculateApkRating(apkId: string): Promise<void> {
+  try {
+    const q = query(collection(db, 'reviews'), where('apkId', '==', apkId));
+    const snap = await getDocs(q);
+    let totalStars = 0;
+    const count = snap.size;
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      totalStars += (data.rating || 5);
+    });
+    const avgRating = count > 0 ? Number((totalStars / count).toFixed(1)) : 4.8;
+    await updateDoc(doc(db, 'apks', apkId), {
+      rating: avgRating,
+      reviewsCount: count,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn('Could not recalculate APK rating:', err);
+  }
+}
+
+export async function addOrUpdateReview(reviewData: {
+  id?: string;
+  apkId: string;
+  userId: string;
+  userName: string;
+  userPhotoURL?: string;
+  rating: number;
+  comment: string;
+}): Promise<string> {
+  const now = new Date().toISOString();
+  let reviewId = reviewData.id;
+
+  // Check if user already submitted a review for this APK if no id provided
+  if (!reviewId) {
+    const q = query(
+      collection(db, 'reviews'),
+      where('apkId', '==', reviewData.apkId),
+      where('userId', '==', reviewData.userId)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      reviewId = snap.docs[0].id;
+    }
+  }
+
+  if (reviewId) {
+    const docRef = doc(db, 'reviews', reviewId);
+    await updateDoc(docRef, removeUndefinedFields({
+      rating: reviewData.rating,
+      comment: reviewData.comment.trim(),
+      userName: reviewData.userName,
+      userPhotoURL: reviewData.userPhotoURL || '',
+      updatedAt: now
+    }));
+  } else {
+    const docRef = await addDoc(collection(db, 'reviews'), removeUndefinedFields({
+      apkId: reviewData.apkId,
+      userId: reviewData.userId,
+      userName: reviewData.userName,
+      userPhotoURL: reviewData.userPhotoURL || '',
+      rating: reviewData.rating,
+      comment: reviewData.comment.trim(),
+      createdAt: now,
+      updatedAt: now
+    }));
+    reviewId = docRef.id;
+  }
+
+  // Recalculate average rating & reviews count on APK doc
+  await recalculateApkRating(reviewData.apkId);
+
+  return reviewId;
+}
+
+export async function deleteReview(reviewId: string, apkId: string): Promise<void> {
+  const docRef = doc(db, 'reviews', reviewId);
+  await deleteDoc(docRef);
+  await recalculateApkRating(apkId);
+}
+

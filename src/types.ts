@@ -40,6 +40,8 @@ export interface ApkItem {
   
   downloadMethod?: 'upload' | 'external';
   apkFilePath?: string;
+  icon_path?: string;
+  apk_file_path?: string;
   apkFileName?: string;
   apkFileSize?: string;
   externalDownloadUrl?: string;
@@ -50,10 +52,23 @@ export interface ApkItem {
   isFeatured: boolean;
   isActive: boolean;
   rating: number; // e.g. 4.8
+  reviewsCount?: number;
   downloadsCount: number;
   tags?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ReviewItem {
+  id: string;
+  apkId: string;
+  userId: string;
+  userName: string;
+  userPhotoURL?: string;
+  rating: number; // 1 to 5
+  comment: string;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export type DurationUnit = 'days' | 'months' | 'years';
@@ -103,6 +118,7 @@ export interface Order {
   upiId: string;
   utr?: string;
   screenshotUrl?: string;
+  screenshot_path?: string;
   status: OrderStatus;
   rejectionReason?: string;
   createdAt: string;
@@ -131,8 +147,13 @@ export interface Purchase {
 export interface StoreSettings {
   websiteName: string;
   logoText: string;
+  logoUrl?: string;
+  logo_path?: string;
+  faviconUrl?: string;
+  favicon_path?: string;
   upiId: string;
   upiQrUrl: string;
+  payment_qr_path?: string;
   supportEmail: string;
   telegramLink?: string;
   whatsappLink?: string;

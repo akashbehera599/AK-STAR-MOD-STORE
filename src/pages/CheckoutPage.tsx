@@ -6,6 +6,7 @@ import {
 import { ApkItem, PlanItem, StoreSettings } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { createOrder, submitPaymentProof, subscribeStoreSettings } from '../services/db';
+import { uploadPaymentProofToSupabase, validateImageFile } from '../services/storage';
 
 interface CheckoutPageProps {
   apk: ApkItem;
@@ -24,13 +25,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   onBack,
   onSuccess
 }) => {
-  const { user, userProfile } = useAuth();
+  const { user } = useAuth();
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [utr, setUtr] = useState('');
-  const [screenshotBase64, setScreenshotBase64] = useState('');
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [screenshotPreview, setScreenshotPreview] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -54,19 +56,15 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      setErrorMessage('Image size exceeds 5MB. Please upload a smaller screenshot.');
+    const val = validateImageFile(file);
+    if (!val.valid) {
+      setErrorMessage(val.error || 'Please select a PNG, JPG, JPEG, or WEBP image under 10MB.');
       return;
     }
 
     setErrorMessage(null);
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      setScreenshotBase64(result);
-      setScreenshotPreview(result);
-    };
-    reader.readAsDataURL(file);
+    setScreenshotFile(file);
+    setScreenshotPreview(URL.createObjectURL(file));
   };
 
   const handleZeroPriceSubmit = async () => {
@@ -112,6 +110,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
 
     setIsSubmitting(true);
+    setUploadProgress(null);
     setErrorMessage(null);
 
     try {
@@ -134,17 +133,35 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         upiId: storeSettings?.upiId || ''
       });
 
-      // 2. Submit UTR & Screenshot
-      await submitPaymentProof(res.orderId, utr.trim(), screenshotBase64);
+      let screenshotUrl = '';
+      let storagePath = '';
+
+      // 2. Upload screenshot directly to Supabase Storage private bucket if attached
+      if (screenshotFile) {
+        setUploadProgress(10);
+        const uploadRes = await uploadPaymentProofToSupabase(
+          screenshotFile, 
+          user.uid, 
+          res.orderId, 
+          (progress) => setUploadProgress(progress)
+        );
+        screenshotUrl = uploadRes.signedUrl;
+        storagePath = uploadRes.storagePath;
+      }
+
+      // 3. Save UTR and Storage Path in Order
+      await submitPaymentProof(res.orderId, utr.trim(), screenshotUrl, storagePath);
 
       onSuccess(res.orderId);
     } catch (err: any) {
       console.error('Submit payment proof error:', err);
-      setErrorMessage(err.message || 'Failed to submit payment proof.');
+      setErrorMessage(err.message || 'Failed to upload payment proof to Supabase Storage.');
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
   };
+
 
   const upiId = storeSettings?.upiId || 'akstarofficial@upi';
   const qrUrl = storeSettings?.upiQrUrl || 
@@ -174,7 +191,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       {/* Summary Card */}
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-5 space-y-4 shadow-xl">
         <div className="flex items-center gap-3">
-          <img src={apk.icon} alt={apk.name} className="w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0" />
+          {apk.icon && apk.icon.trim() !== '' ? (
+            <img src={apk.icon} alt={apk.name} className="w-12 h-12 rounded-2xl object-cover border border-zinc-700 shrink-0" />
+          ) : (
+            <div className="w-12 h-12 rounded-2xl bg-zinc-800 border border-zinc-700 flex items-center justify-center font-bold text-amber-400 shrink-0">
+              {apk.name?.substring(0, 2).toUpperCase() || 'APK'}
+            </div>
+          )}
           <div>
             <h2 className="text-sm font-bold text-white">{apk.name}</h2>
             <p className="text-xs text-amber-400 font-semibold">{plan.name} ({plan.durationDays} Days Access)</p>
@@ -231,9 +254,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             </span>
 
             {/* QR Code */}
-            <div className="bg-white p-3 rounded-2xl inline-block shadow-lg mx-auto border-4 border-amber-400">
-              <img src={qrUrl} alt="UPI QR Code" className="w-44 h-44 object-contain" />
-            </div>
+            {qrUrl && qrUrl.trim() !== '' && (
+              <div className="bg-white p-3 rounded-2xl inline-block shadow-lg mx-auto border-4 border-amber-400">
+                <img src={qrUrl} alt="UPI QR Code" className="w-44 h-44 object-contain" />
+              </div>
+            )}
 
             {/* UPI ID Copy Field */}
             <div className="bg-zinc-950 p-3 rounded-2xl border border-zinc-800 flex items-center justify-between gap-2 max-w-sm mx-auto">
@@ -311,7 +336,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     onChange={handleScreenshotChange}
                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                   />
-                  {screenshotPreview ? (
+                  {screenshotPreview && screenshotPreview.trim() !== '' ? (
                     <div className="space-y-2">
                       <img src={screenshotPreview} alt="Screenshot preview" className="max-h-36 mx-auto rounded-xl object-contain border border-zinc-700" />
                       <p className="text-[10px] text-emerald-400 font-bold">Screenshot attached successfully</p>

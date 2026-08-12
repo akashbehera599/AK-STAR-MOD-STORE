@@ -10,9 +10,10 @@ import {
   ApkItem, Category, Coupon, Order, PlanItem, StoreSettings, UserProfile 
 } from '../types';
 import { AdminApkModal } from '../components/AdminApkModal';
+import { uploadFileToStorage, validateImageFile } from '../services/storage';
 import { 
   addApk, addCategory, addCoupon, addPlan, approveOrder, 
-  deleteApk, deleteCategory, deleteCoupon, deletePlan, getPlansForApk,
+  deleteApk, deleteCategory, deleteCoupon, deletePlan, getPlansForApk, subscribePlans,
   rejectOrder, subscribeAllOrders, subscribeApks, subscribeCategories, 
   subscribeCoupons, subscribeStoreSettings, subscribeUsers, 
   updateApk, updateCategory, updateCoupon, updatePlan, updateStoreSettings 
@@ -62,6 +63,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
   } | null>(null);
 
   const [loadingAction, setLoadingAction] = useState(false);
+  const [qrUploading, setQrUploading] = useState(false);
+  const [qrProgress, setQrProgress] = useState<number | null>(null);
 
   // Security Verification
   const isAuthorized = isAdminEmail(user?.email);
@@ -116,8 +119,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
   // APK Save Handler
   const handleSaveApk = async (apkPayload: Partial<ApkItem>) => {
     if (!apkPayload.name || !apkPayload.category) {
-      alert('APK Name and Category are required');
-      return;
+      throw new Error('APK Name and Category are required.');
     }
 
     setLoadingAction(true);
@@ -164,8 +166,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
       setShowApkModal(false);
       setEditingApk(null);
     } catch (err: any) {
-      console.error(err);
-      alert('Error saving APK: ' + err.message);
+      console.error('Error saving APK:', err);
+      throw err;
     } finally {
       setLoadingAction(false);
     }
@@ -262,9 +264,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
     }
   };
 
-  // Delete Action Executor (Requirement 22: Delete must really work!)
+  // Delete Action Executor
   const handleExecuteDelete = async () => {
-    if (!confirmDelete) return;
+    if (!confirmDelete || !confirmDelete.id) {
+      setConfirmDelete(null);
+      return;
+    }
+
     setLoadingAction(true);
 
     try {
@@ -280,7 +286,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
 
       setConfirmDelete(null);
     } catch (err: any) {
-      alert('Error deleting item: ' + err.message);
+      console.error('Delete action failed:', err);
+      alert('Error deleting item: ' + (err?.message || 'An unexpected error occurred.'));
+      // Keep modal open so user sees error and can retry or cancel
     } finally {
       setLoadingAction(false);
     }
@@ -491,7 +499,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {apks.map(apk => (
               <div key={apk.id} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4 flex items-start gap-3">
-                <img src={apk.icon} alt={apk.name} className="w-14 h-14 rounded-2xl object-cover shrink-0 border border-zinc-700" />
+                {apk.icon && apk.icon.trim() !== '' ? (
+                  <img src={apk.icon} alt={apk.name} className="w-14 h-14 rounded-2xl object-cover shrink-0 border border-zinc-700" />
+                ) : (
+                  <div className="w-14 h-14 rounded-2xl bg-zinc-800 border border-zinc-700 shrink-0 flex items-center justify-center font-bold text-amber-400">
+                    {apk.name?.substring(0, 2).toUpperCase() || 'APK'}
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="text-sm font-bold text-white truncate">{apk.name}</h3>
@@ -697,19 +711,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
                   <p className="font-bold text-white">{cat.name}</p>
                   <p className="text-[10px] text-zinc-500">{cat.slug}</p>
                 </div>
-                <button
-                  onClick={() => {
-                    setConfirmDelete({
-                      type: 'category',
-                      id: cat.id,
-                      title: `Delete Category "${cat.name}"?`,
-                      message: 'Are you sure you want to delete this category?'
-                    });
-                  }}
-                  className="text-red-400 hover:text-red-300 p-1"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setEditingCategory(cat);
+                      setShowCategoryModal(true);
+                    }}
+                    className="text-amber-400 hover:text-amber-300 p-1 rounded-lg hover:bg-zinc-800 transition"
+                    title="Edit Category"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setConfirmDelete({
+                        type: 'category',
+                        id: cat.id,
+                        title: `Delete Category "${cat.name}"?`,
+                        message: 'Are you sure you want to delete this category?'
+                      });
+                    }}
+                    className="text-red-400 hover:text-red-300 p-1 rounded-lg hover:bg-zinc-800 transition"
+                    title="Delete Category"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -718,49 +745,138 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
 
       {/* STORE SETTINGS TAB */}
       {activeTab === 'settings' && storeSettings && (
-        <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 space-y-4 max-w-xl">
-          <h2 className="text-sm font-bold text-white">Store UPI & Info Settings</h2>
+        <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 space-y-5 max-w-xl shadow-2xl">
+          <div>
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <Settings className="w-4 h-4 text-amber-400" /> Store UPI & Configuration Settings
+            </h2>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              Manage store branding, UPI payment details, and support links.
+            </p>
+          </div>
 
-          <div className="space-y-3 text-xs">
+          <div className="space-y-4 text-xs">
             <div>
-              <label className="text-zinc-400 font-semibold">Store UPI ID</label>
+              <label className="text-zinc-300 font-semibold block mb-1">Store UPI ID <span className="text-amber-400">*</span></label>
               <input
                 type="text"
-                value={storeSettings.upiId}
+                required
+                value={storeSettings.upiId || ''}
                 onChange={(e) => setStoreSettings({ ...storeSettings, upiId: e.target.value })}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-amber-500 font-mono"
               />
             </div>
 
+            {/* Custom QR Upload / URL */}
+            <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3">
+              <label className="text-zinc-300 font-semibold block">Custom UPI QR Code Image</label>
+              
+              {storeSettings.upiQrUrl && storeSettings.upiQrUrl.trim() !== '' && (
+                <div className="w-32 h-32 bg-white p-2 rounded-xl mx-auto border border-zinc-700">
+                  <img src={storeSettings.upiQrUrl} alt="Store QR Code" className="w-full h-full object-contain" />
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={storeSettings.upiQrUrl || ''}
+                  placeholder="Enter QR Image URL or upload below..."
+                  onChange={(e) => setStoreSettings({ ...storeSettings, upiQrUrl: e.target.value })}
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-white outline-none"
+                />
+
+                <label className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold px-3 py-2 rounded-xl border border-amber-500/30 cursor-pointer text-center flex items-center justify-center gap-1.5 shrink-0 transition">
+                  <Upload className="w-3.5 h-3.5" />
+                  {qrUploading ? `Uploading ${qrProgress}%` : 'Upload File'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={qrUploading}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const val = validateImageFile(file);
+                      if (!val.valid) {
+                        alert(val.error || 'Please select a valid image.');
+                        return;
+                      }
+
+                      setQrUploading(true);
+                      setQrProgress(0);
+                      try {
+                        const url = await uploadFileToStorage(file, 'qr', (p) => setQrProgress(p));
+                        setStoreSettings(prev => prev ? { ...prev, upiQrUrl: url } : prev);
+                        alert('QR code image uploaded successfully!');
+                      } catch (err: any) {
+                        alert('QR Upload failed: ' + err.message);
+                      } finally {
+                        setQrUploading(false);
+                        setQrProgress(null);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
             <div>
-              <label className="text-zinc-400 font-semibold">Custom UPI QR Code Image URL (Optional)</label>
+              <label className="text-zinc-300 font-semibold block mb-1">Store / Website Name</label>
               <input
                 type="text"
-                value={storeSettings.upiQrUrl || ''}
-                placeholder="Leave blank to auto-generate QR code"
-                onChange={(e) => setStoreSettings({ ...storeSettings, upiQrUrl: e.target.value })}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
+                value={storeSettings.websiteName || 'AK STAR MOD'}
+                onChange={(e) => setStoreSettings({ ...storeSettings, websiteName: e.target.value })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-amber-500"
               />
             </div>
 
             <div>
-              <label className="text-zinc-400 font-semibold">Telegram Support Link</label>
+              <label className="text-zinc-300 font-semibold block mb-1">Support Email</label>
+              <input
+                type="email"
+                value={storeSettings.supportEmail || ''}
+                onChange={(e) => setStoreSettings({ ...storeSettings, supportEmail: e.target.value })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-zinc-300 font-semibold block mb-1">Telegram Support Link</label>
               <input
                 type="text"
                 value={storeSettings.telegramLink || ''}
                 onChange={(e) => setStoreSettings({ ...storeSettings, telegramLink: e.target.value })}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white mt-1"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-zinc-300 font-semibold block mb-1">Announcement Banner Message</label>
+              <input
+                type="text"
+                value={storeSettings.announcementBanner || ''}
+                onChange={(e) => setStoreSettings({ ...storeSettings, announcementBanner: e.target.value })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-white outline-none focus:border-amber-500"
               />
             </div>
 
             <button
+              disabled={loadingAction}
               onClick={async () => {
-                await updateStoreSettings(storeSettings);
-                alert('Settings updated successfully!');
+                setLoadingAction(true);
+                try {
+                  await updateStoreSettings(storeSettings);
+                  alert('Store settings saved successfully!');
+                } catch (err: any) {
+                  alert('Error saving settings: ' + err.message);
+                } finally {
+                  setLoadingAction(false);
+                }
               }}
-              className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs py-3 rounded-xl transition"
+              className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs py-3.5 rounded-xl shadow-lg transition disabled:opacity-50"
             >
-              SAVE SETTINGS
+              {loadingAction ? 'SAVING SETTINGS...' : 'SAVE STORE SETTINGS'}
             </button>
           </div>
         </div>
@@ -935,8 +1051,86 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
         </div>
       )}
 
+      {/* CATEGORY MODAL */}
+      {showCategoryModal && editingCategory && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <form onSubmit={handleSaveCategory} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 max-w-sm w-full space-y-4 text-xs shadow-2xl">
+            <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
+              <h3 className="text-sm font-extrabold text-white">
+                {editingCategory.id ? 'Edit Category' : 'Create New Category'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(false)}
+                className="text-zinc-400 hover:text-white p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="text-zinc-400 font-semibold block mb-1">Category Name</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Tools, Social, Entertainment"
+                value={editingCategory.name || ''}
+                onChange={(e) => {
+                  const name = e.target.value;
+                  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                  setEditingCategory(prev => ({ ...prev, name, slug: prev?.slug || slug }));
+                }}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-zinc-400 font-semibold block mb-1">Slug (URL Identifier)</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. tools, social, entertainment"
+                value={editingCategory.slug || ''}
+                onChange={(e) => setEditingCategory(prev => ({ ...prev, slug: e.target.value }))}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-white font-mono focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="cat-active"
+                checked={editingCategory.active !== false}
+                onChange={(e) => setEditingCategory(prev => ({ ...prev, active: e.target.checked }))}
+                className="rounded accent-amber-500 w-4 h-4 cursor-pointer"
+              />
+              <label htmlFor="cat-active" className="text-zinc-300 font-medium cursor-pointer">
+                Active & Visible in Store
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(false)}
+                className="w-1/3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold py-2.5 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loadingAction}
+                className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black py-2.5 rounded-xl shadow transition disabled:opacity-50"
+              >
+                {loadingAction ? 'Saving...' : 'Save Category'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* SCREENSHOT PREVIEW MODAL */}
-      {screenshotModalUrl && (
+      {screenshotModalUrl && screenshotModalUrl.trim() !== '' && (
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-zinc-900 p-4 rounded-3xl max-w-lg w-full space-y-3">
             <div className="flex justify-between items-center text-xs font-bold text-white">
@@ -994,14 +1188,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
 // Helper sub-component for plans list in modal
 function PlansListForApk({ apkId, onDeletePlan }: { apkId: string; onDeletePlan: (id: string) => void }) {
   const [plans, setPlans] = useState<PlanItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let isMounted = true;
-    getPlansForApk(apkId).then(list => {
-      if (isMounted) setPlans(list);
+    setLoading(true);
+    const unsub = subscribePlans(apkId, (list) => {
+      setPlans(list);
+      setLoading(false);
     });
-    return () => { isMounted = false; };
+    return () => unsub();
   }, [apkId]);
+
+  if (loading) {
+    return <p className="text-xs text-zinc-500 py-2 animate-pulse">Loading pricing plans...</p>;
+  }
 
   if (plans.length === 0) {
     return <p className="text-xs text-zinc-500 py-2">No plans configured yet for this APK.</p>;
@@ -1010,12 +1210,17 @@ function PlansListForApk({ apkId, onDeletePlan }: { apkId: string; onDeletePlan:
   return (
     <div className="space-y-1 text-xs">
       {plans.map(p => (
-        <div key={p.id} className="bg-zinc-950 p-2.5 rounded-xl border border-zinc-800 flex justify-between items-center">
+        <div key={p.id} className="bg-zinc-950 p-2.5 rounded-xl border border-zinc-800 flex justify-between items-center hover:border-zinc-700 transition">
           <div>
             <span className="font-bold text-white">{p.name}</span>
             <span className="text-zinc-400 ml-2">₹{p.price} ({p.durationDays} Days)</span>
           </div>
-          <button onClick={() => onDeletePlan(p.id)} className="text-red-400 hover:text-red-300 p-1">
+          <button 
+            type="button"
+            onClick={() => onDeletePlan(p.id)} 
+            aria-label={`Delete ${p.name}`}
+            className="text-red-400 hover:text-red-300 p-1 rounded-lg hover:bg-red-500/10 transition cursor-pointer"
+          >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>

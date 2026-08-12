@@ -6,6 +6,8 @@ import {
 import { ApkItem, PlanItem, Purchase } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { checkApkAccess, getPlansForApk, validateCoupon } from '../services/db';
+import { getSignedDownloadUrl } from '../services/storage';
+import { ReviewSection } from '../components/ReviewSection';
 
 interface ApkDetailPageProps {
   apk: ApkItem;
@@ -75,7 +77,7 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
     }
   };
 
-  const handleBuyClick = () => {
+  const handleBuyClick = async () => {
     if (!user) {
       signInWithGoogle();
       return;
@@ -90,8 +92,27 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
       return;
     }
 
-    if (userAccess.hasAccess && userAccess.purchase?.downloadUrl) {
-      window.open(userAccess.purchase.downloadUrl, '_blank');
+    // Verify active entitlement before providing paid download access
+    const access = await checkApkAccess(user.uid, apk.id);
+    const isAdmin = user.email === 'akashbehera599@gmail.com' || user.email === 'akstarofficial732@gmail.com';
+
+    if (access.hasAccess || isAdmin) {
+      let downloadUrl = access.purchase?.downloadUrl || apk.downloadUrl || apk.externalDownloadUrl;
+      const filePath = apk.apk_file_path || apk.apkFilePath;
+
+      // If stored in Supabase Storage, generate a secure, short-lived signed URL (300s)
+      if (filePath) {
+        const signed = await getSignedDownloadUrl('apk-assets', filePath, 300);
+        if (signed) {
+          downloadUrl = signed;
+        }
+      }
+
+      if (downloadUrl) {
+        window.open(downloadUrl, '_blank');
+      } else {
+        alert('Download link is currently being prepared by admin. Please try again shortly.');
+      }
       return;
     }
 
@@ -120,7 +141,7 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative overflow-hidden">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
           <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-3xl overflow-hidden bg-zinc-800 border-2 border-amber-500/30 shrink-0 shadow-lg">
-            {apk.icon ? (
+            {apk.icon && apk.icon.trim() !== '' ? (
               <img src={apk.icon} alt={apk.name} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-amber-500/20 to-zinc-950 text-amber-400 font-extrabold text-3xl">
@@ -296,11 +317,11 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
       )}
 
       {/* Screenshots Gallery */}
-      {apk.screenshots && apk.screenshots.length > 0 && (
+      {apk.screenshots && apk.screenshots.filter(s => s && s.trim() !== '').length > 0 && (
         <div className="bg-zinc-900/60 border border-zinc-800 rounded-3xl p-5 space-y-3">
           <h2 className="text-sm font-extrabold text-white">App Screenshots</h2>
           <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
-            {apk.screenshots.map((src, i) => (
+            {apk.screenshots.filter(src => src && src.trim() !== '').map((src, i) => (
               <img
                 key={i}
                 src={src}
@@ -344,8 +365,16 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
         )}
       </div>
 
+      {/* Ratings & Reviews System */}
+      <ReviewSection
+        apkId={apk.id}
+        apkName={apk.name}
+        currentRating={apk.rating}
+        reviewsCount={apk.reviewsCount}
+      />
+
       {/* Screenshot Lightbox Modal */}
-      {activeImageTab && (
+      {activeImageTab && activeImageTab.trim() !== '' && (
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setActiveImageTab(null)}>
           <img src={activeImageTab} alt="Preview" className="max-w-full max-h-[90vh] rounded-2xl object-contain shadow-2xl" />
         </div>

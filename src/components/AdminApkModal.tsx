@@ -1,14 +1,17 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, Upload, Image as ImageIcon, FileCode, Link as LinkIcon, 
-  Trash2, Plus, Sparkles, CheckCircle2, AlertCircle, RefreshCw 
+  Trash2, Plus, Sparkles, CheckCircle2, AlertCircle, RefreshCw,
+  RotateCw, XCircle, CheckCircle
 } from 'lucide-react';
 import { ApkItem, Category } from '../types';
 import { 
-  uploadFileToStorage, 
+  uploadFileWithTask, 
   validateImageFile, 
   validateApkFile, 
-  validateExternalUrl 
+  validateExternalUrl,
+  fileToDataUrl,
+  UploadTaskHandler
 } from '../services/storage';
 import { addCategory } from '../services/db';
 
@@ -20,6 +23,8 @@ interface AdminApkModalProps {
   onCategoryCreated?: () => void;
 }
 
+type UploadStatus = 'IDLE' | 'SELECTED' | 'UPLOADING' | 'SUCCESS' | 'ERROR' | 'CANCELED';
+
 export const AdminApkModal: React.FC<AdminApkModalProps> = ({
   editingApk,
   categories,
@@ -29,8 +34,14 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
 }) => {
   const isEditing = !!editingApk?.id;
 
+  // Generate or reuse target APK ID prior to file uploads
+  const [targetApkId] = useState<string>(
+    () => editingApk?.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `apk_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`)
+  );
+
   // Form State
   const [formData, setFormData] = useState<Partial<ApkItem>>({
+    id: targetApkId,
     name: editingApk?.name || '',
     shortDescription: editingApk?.shortDescription || '',
     description: editingApk?.description || '',
@@ -41,12 +52,14 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
     size: editingApk?.size || '45 MB',
     icon: editingApk?.icon || editingApk?.iconUrl || '',
     iconUrl: editingApk?.iconUrl || editingApk?.icon || '',
+    icon_path: editingApk?.icon_path || '',
     screenshots: editingApk?.screenshots || editingApk?.screenshotUrls || [],
     screenshotUrls: editingApk?.screenshotUrls || editingApk?.screenshots || [],
     features: editingApk?.features || ['Premium Unlocked', 'No Ads', 'VIP Features'],
     changelog: editingApk?.changelog || 'Initial release',
     downloadMethod: editingApk?.downloadMethod || 'upload',
     apkFilePath: editingApk?.apkFilePath || '',
+    apk_file_path: editingApk?.apk_file_path || editingApk?.apkFilePath || '',
     apkFileName: editingApk?.apkFileName || '',
     apkFileSize: editingApk?.apkFileSize || '',
     externalDownloadUrl: editingApk?.externalDownloadUrl || '',
@@ -62,9 +75,27 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
     (formData.features || []).join('\n')
   );
 
+  // Icon Upload States
+  const [iconUploadState, setIconUploadState] = useState<UploadStatus>(
+    (editingApk?.icon || editingApk?.iconUrl) ? 'SUCCESS' : 'IDLE'
+  );
   const [iconUploadProgress, setIconUploadProgress] = useState<number | null>(null);
+  const [selectedIconFile, setSelectedIconFile] = useState<File | null>(null);
+  const [iconPreviewUrl, setIconPreviewUrl] = useState<string | null>(null);
+  const iconTaskHandlerRef = useRef<UploadTaskHandler | null>(null);
+
+  // APK File Upload States
+  const [apkUploadState, setApkUploadState] = useState<UploadStatus>(
+    (editingApk?.apkFilePath || editingApk?.downloadUrl) ? 'SUCCESS' : 'IDLE'
+  );
   const [apkUploadProgress, setApkUploadProgress] = useState<number | null>(null);
+  const [selectedApkFile, setSelectedApkFile] = useState<File | null>(null);
+  const apkTaskHandlerRef = useRef<UploadTaskHandler | null>(null);
+
+  // Screenshot Upload States
+  const [screenshotUploadState, setScreenshotUploadState] = useState<UploadStatus>('IDLE');
   const [screenshotUploadProgress, setScreenshotUploadProgress] = useState<number | null>(null);
+  const screenshotTaskHandlerRef = useRef<UploadTaskHandler | null>(null);
 
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -80,48 +111,195 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
   const screenshotsFileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // Icon File Handler
-  const handleIconSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const iconPreviewUrlRef = useRef<string | null>(null);
+
+  // Synchronize category with available categories if not set or invalid
+  useEffect(() => {
+    if (categories && categories.length > 0) {
+      if (!formData.category || !categories.some(c => c.name === formData.category)) {
+        const defaultCat = categories[0];
+        setFormData(prev => ({
+          ...prev,
+          category: defaultCat.name,
+          categoryName: defaultCat.name,
+          categoryId: defaultCat.id
+        }));
+      }
+    }
+  }, [categories]);
+
+  // Cleanup active uploads on component unmount ONLY
+  useEffect(() => {
+    return () => {
+      if (iconPreviewUrlRef.current) {
+        URL.revokeObjectURL(iconPreviewUrlRef.current);
+      }
+      if (iconTaskHandlerRef.current) {
+        iconTaskHandlerRef.current.cancel();
+      }
+      if (apkTaskHandlerRef.current) {
+        apkTaskHandlerRef.current.cancel();
+      }
+      if (screenshotTaskHandlerRef.current) {
+        screenshotTaskHandlerRef.current.cancel();
+      }
+    };
+  }, []);
+
+  // Icon Upload Handler
+  const startIconUpload = async (file: File) => {
+    setUploadError(null);
+    setIconUploadState('UPLOADING');
+    setIconUploadProgress(0);
+
+    if (iconPreviewUrlRef.current) {
+      URL.revokeObjectURL(iconPreviewUrlRef.current);
+    }
+    const localUrl = URL.createObjectURL(file);
+    iconPreviewUrlRef.current = localUrl;
+    setIconPreviewUrl(localUrl);
+
+    try {
+      const handler = uploadFileWithTask(file, 'icons', (p) => {
+        setIconUploadProgress(p);
+      }, targetApkId);
+      iconTaskHandlerRef.current = handler;
+
+      const result = await handler.promise;
+
+      setFormData(prev => ({
+        ...prev,
+        icon: result.downloadUrl,
+        iconUrl: result.downloadUrl,
+        icon_path: result.storagePath
+      }));
+      setIconUploadState('SUCCESS');
+      setIconUploadProgress(100);
+    } catch (err: any) {
+      const msg = err?.message || 'Icon upload failed.';
+      if (msg.includes('canceled') || msg.includes('Canceled') || err?.code === 'storage/canceled') {
+        console.log('Icon upload canceled.');
+        setIconUploadState('CANCELED');
+      } else {
+        console.error('Icon upload failed:', err);
+        // Fallback: If Storage upload fails, convert image (<5MB) to Data URL so Admin is never blocked
+        if (file.size <= 5 * 1024 * 1024) {
+          try {
+            const dataUrl = await fileToDataUrl(file);
+            setFormData(prev => ({
+              ...prev,
+              icon: dataUrl,
+              iconUrl: dataUrl
+            }));
+            setIconUploadState('SUCCESS');
+            setIconUploadProgress(100);
+            return;
+          } catch (e) {
+            // ignore and show original error
+          }
+        }
+        setIconUploadState('ERROR');
+        setUploadError(msg);
+      }
+      setIconUploadProgress(null);
+    }
+  };
+
+  const handleIconSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploadError(null);
     const val = validateImageFile(file);
     if (!val.valid) {
-      setUploadError(val.error || 'Invalid image file');
+      setUploadError(val.error || 'Please select a valid image (PNG, JPG, WEBP) under 10 MB.');
+      setIconUploadState('ERROR');
       return;
     }
 
-    try {
-      setIconUploadProgress(10);
-      const tempId = editingApk?.id || `temp_${Date.now()}`;
-      const path = `apks/icons/${tempId}_${Date.now()}_${file.name}`;
-      
-      const downloadUrl = await uploadFileToStorage(file, path, (progress) => {
-        setIconUploadProgress(progress);
-      });
+    setSelectedIconFile(file);
+    setIconUploadState('SELECTED');
+    startIconUpload(file);
+  };
 
-      setFormData(prev => ({
-        ...prev,
-        icon: downloadUrl,
-        iconUrl: downloadUrl
-      }));
-      setIconUploadProgress(null);
-    } catch (err: any) {
-      console.error(err);
-      setUploadError('Failed to upload icon image: ' + err.message);
-      setIconUploadProgress(null);
+  const handleCancelIconUpload = () => {
+    if (iconTaskHandlerRef.current) {
+      iconTaskHandlerRef.current.cancel();
+      iconTaskHandlerRef.current = null;
+    }
+    setIconUploadState('CANCELED');
+    setIconUploadProgress(null);
+  };
+
+  const handleRetryIconUpload = () => {
+    if (selectedIconFile) {
+      startIconUpload(selectedIconFile);
+    } else if (iconFileInputRef.current) {
+      iconFileInputRef.current.click();
     }
   };
 
-  // Remove Icon Handler
   const handleRemoveIcon = () => {
-    setFormData(prev => ({ ...prev, icon: '', iconUrl: '' }));
+    if (iconTaskHandlerRef.current) {
+      iconTaskHandlerRef.current.cancel();
+      iconTaskHandlerRef.current = null;
+    }
+    if (iconPreviewUrlRef.current) {
+      URL.revokeObjectURL(iconPreviewUrlRef.current);
+      iconPreviewUrlRef.current = null;
+    }
+    setIconPreviewUrl(null);
+    setSelectedIconFile(null);
+    setIconUploadState('IDLE');
+    setIconUploadProgress(null);
+    setFormData(prev => ({ ...prev, icon: '', iconUrl: '', icon_path: '' }));
     if (iconFileInputRef.current) iconFileInputRef.current.value = '';
   };
 
-  // APK File Handler
-  const handleApkSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // APK File Upload Handler
+  const startApkUpload = async (file: File) => {
+    setUploadError(null);
+    setApkUploadState('UPLOADING');
+    setApkUploadProgress(0);
+
+    const fileSizeFormatted = file.size > 1024 * 1024 
+      ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+      : `${Math.round(file.size / 1024)} KB`;
+
+    try {
+      const handler = uploadFileWithTask(file, 'files', (p) => {
+        setApkUploadProgress(p);
+      }, targetApkId);
+      apkTaskHandlerRef.current = handler;
+
+      const result = await handler.promise;
+
+      setFormData(prev => ({
+        ...prev,
+        apkFilePath: result.storagePath || result.downloadUrl,
+        apk_file_path: result.storagePath || result.downloadUrl,
+        apkFileName: file.name,
+        apkFileSize: fileSizeFormatted,
+        downloadUrl: result.downloadUrl,
+        size: fileSizeFormatted
+      }));
+      setApkUploadState('SUCCESS');
+      setApkUploadProgress(100);
+    } catch (err: any) {
+      const msg = err?.message || 'APK file upload failed.';
+      if (msg.includes('canceled') || msg.includes('Canceled') || err?.code === 'storage/canceled') {
+        console.log('APK upload canceled.');
+        setApkUploadState('CANCELED');
+      } else {
+        console.error('APK file upload failed:', err);
+        setApkUploadState('ERROR');
+        setUploadError(msg);
+      }
+      setApkUploadProgress(null);
+    }
+  };
+
+  const handleApkSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -129,36 +307,49 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
     const val = validateApkFile(file);
     if (!val.valid) {
       setUploadError(val.error || 'Only .apk files are supported.');
+      setApkUploadState('ERROR');
       return;
     }
 
-    try {
-      setApkUploadProgress(5);
-      const tempId = editingApk?.id || `temp_${Date.now()}`;
-      const path = `apks/files/${tempId}_${Date.now()}_${file.name}`;
+    setSelectedApkFile(file);
+    setApkUploadState('SELECTED');
+    startApkUpload(file);
+  };
 
-      const fileSizeFormatted = file.size > 1024 * 1024 
-        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-        : `${Math.round(file.size / 1024)} KB`;
-
-      const downloadUrl = await uploadFileToStorage(file, path, (p) => {
-        setApkUploadProgress(p);
-      });
-
-      setFormData(prev => ({
-        ...prev,
-        apkFilePath: downloadUrl,
-        apkFileName: file.name,
-        apkFileSize: fileSizeFormatted,
-        downloadUrl: downloadUrl,
-        size: fileSizeFormatted
-      }));
-      setApkUploadProgress(null);
-    } catch (err: any) {
-      console.error(err);
-      setUploadError('Failed to upload APK file: ' + err.message);
-      setApkUploadProgress(null);
+  const handleCancelApkUpload = () => {
+    if (apkTaskHandlerRef.current) {
+      apkTaskHandlerRef.current.cancel();
+      apkTaskHandlerRef.current = null;
     }
+    setApkUploadState('CANCELED');
+    setApkUploadProgress(null);
+  };
+
+  const handleRetryApkUpload = () => {
+    if (selectedApkFile) {
+      startApkUpload(selectedApkFile);
+    } else if (apkFileInputRef.current) {
+      apkFileInputRef.current.click();
+    }
+  };
+
+  const handleRemoveApkFile = () => {
+    if (apkTaskHandlerRef.current) {
+      apkTaskHandlerRef.current.cancel();
+      apkTaskHandlerRef.current = null;
+    }
+    setSelectedApkFile(null);
+    setApkUploadState('IDLE');
+    setApkUploadProgress(null);
+    setFormData(prev => ({
+      ...prev,
+      apkFilePath: '',
+      apk_file_path: '',
+      apkFileName: '',
+      apkFileSize: '',
+      downloadUrl: ''
+    }));
+    if (apkFileInputRef.current) apkFileInputRef.current.value = '';
   };
 
   // Screenshot Selection Handler
@@ -173,23 +364,34 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
       const val = validateImageFile(f);
       if (!val.valid) {
         setUploadError(`File "${f.name}": ${val.error}`);
+        setScreenshotUploadState('ERROR');
         return;
       }
     }
 
     try {
-      setScreenshotUploadProgress(10);
-      const tempId = editingApk?.id || `temp_${Date.now()}`;
+      setScreenshotUploadState('UPLOADING');
+      setScreenshotUploadProgress(0);
       const uploadedUrls: string[] = [];
 
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
-        const path = `apks/screenshots/${tempId}_${i}_${Date.now()}_${file.name}`;
-        const url = await uploadFileToStorage(file, path, (p) => {
-          const overall = Math.round(((i + p / 100) / fileList.length) * 100);
-          setScreenshotUploadProgress(overall);
-        });
-        uploadedUrls.push(url);
+        try {
+          const handler = uploadFileWithTask(file, 'screenshots', (p) => {
+            const overall = Math.round(((i + p / 100) / fileList.length) * 100);
+            setScreenshotUploadProgress(overall);
+          }, targetApkId);
+          screenshotTaskHandlerRef.current = handler;
+          const result = await handler.promise;
+          uploadedUrls.push(result.downloadUrl);
+        } catch (fileErr: any) {
+          if (file.size <= 5 * 1024 * 1024) {
+            const dataUrl = await fileToDataUrl(file);
+            uploadedUrls.push(dataUrl);
+          } else {
+            throw fileErr;
+          }
+        }
       }
 
       setFormData(prev => {
@@ -201,10 +403,13 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
           screenshotUrls: combined
         };
       });
-      setScreenshotUploadProgress(null);
+      setScreenshotUploadState('SUCCESS');
+      setScreenshotUploadProgress(100);
     } catch (err: any) {
-      console.error(err);
-      setUploadError('Failed to upload screenshots: ' + err.message);
+      console.error('Screenshot upload error:', err);
+      const msg = err.message || 'Screenshot upload failed.';
+      setScreenshotUploadState('ERROR');
+      setUploadError(msg);
       setScreenshotUploadProgress(null);
     }
   };
@@ -304,13 +509,15 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
 
     const payload: Partial<ApkItem> = {
       ...formData,
+      id: targetApkId,
       name: formData.name.trim(),
-      slug: formData.slug || formData.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      slug: formData.slug || formData.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
       category: finalCategoryName,
       categoryName: finalCategoryName,
       categoryId: selectedCatObj?.id || formData.categoryId || '',
       icon: finalIcon,
       iconUrl: finalIcon,
+      icon_path: formData.icon_path || '',
       screenshots: finalScreenshots,
       screenshotUrls: finalScreenshots,
       features: parsedFeatures.length > 0 ? parsedFeatures : ['Premium Unlocked', 'VIP MOD'],
@@ -319,6 +526,7 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
       downloadUrl: finalDownloadUrl,
       externalDownloadUrl: formData.externalDownloadUrl?.trim() || '',
       apkFilePath: formData.apkFilePath || '',
+      apk_file_path: formData.apk_file_path || formData.apkFilePath || '',
       apkFileName: formData.apkFileName || '',
       apkFileSize: formData.apkFileSize || formData.size || '',
       isFree: !!formData.isFree,
@@ -491,24 +699,29 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
               <span className="font-bold text-zinc-200 flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-amber-400" /> APK Icon / Logo
               </span>
-              <span className="text-[10px] text-zinc-500">Supported: PNG, JPG, WEBP</span>
+              <span className="text-[10px] text-zinc-500">Allowed: PNG, JPG, WEBP (&lt;10MB)</span>
             </div>
 
             <div className="flex items-center gap-4">
               {/* Icon Preview Box */}
-              <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0 shadow-md relative">
-                {formData.icon || formData.iconUrl ? (
+              <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0 shadow-md relative group">
+                {((iconPreviewUrl || formData.icon || formData.iconUrl || '').trim() !== '') ? (
                   <img
-                    src={formData.icon || formData.iconUrl}
-                    alt="APK Icon"
+                    src={(iconPreviewUrl || formData.icon || formData.iconUrl || '').trim()}
+                    alt="APK Icon Preview"
                     className="w-full h-full object-cover"
                   />
                 ) : (
                   <ImageIcon className="w-6 h-6 text-zinc-600" />
                 )}
+                {iconUploadState === 'UPLOADING' && (
+                  <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center">
+                    <RefreshCw className="w-5 h-5 text-amber-400 animate-spin" />
+                  </div>
+                )}
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons & Status */}
               <div className="space-y-2 flex-1">
                 <input
                   type="file"
@@ -519,18 +732,41 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
                   id="input-apk-icon-file"
                 />
 
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => iconFileInputRef.current?.click()}
-                    disabled={iconUploadProgress !== null}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-3.5 py-2 rounded-xl border border-zinc-700/60 transition flex items-center gap-1.5"
+                    disabled={iconUploadState === 'UPLOADING'}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold px-3.5 py-2 rounded-xl border border-zinc-700/60 transition flex items-center gap-1.5 disabled:opacity-50"
                   >
                     <Upload className="w-3.5 h-3.5 text-amber-400" />
-                    {formData.icon ? 'Replace Image' : 'Upload Image'}
+                    {(formData.icon || formData.iconUrl) ? 'Replace Image' : 'Upload Image'}
                   </button>
 
-                  {(formData.icon || formData.iconUrl) && (
+                  {/* Cancel Upload Button */}
+                  {iconUploadState === 'UPLOADING' && (
+                    <button
+                      type="button"
+                      onClick={handleCancelIconUpload}
+                      className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold px-3 py-2 rounded-xl border border-amber-500/30 transition flex items-center gap-1"
+                    >
+                      <XCircle className="w-3.5 h-3.5" /> Cancel
+                    </button>
+                  )}
+
+                  {/* Retry Button */}
+                  {(iconUploadState === 'ERROR' || iconUploadState === 'CANCELED') && (
+                    <button
+                      type="button"
+                      onClick={handleRetryIconUpload}
+                      className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 font-bold px-3 py-2 rounded-xl border border-amber-500/40 transition flex items-center gap-1"
+                    >
+                      <RotateCw className="w-3.5 h-3.5" /> Retry Upload
+                    </button>
+                  )}
+
+                  {/* Remove Button */}
+                  {(formData.icon || formData.iconUrl || iconPreviewUrl) && iconUploadState !== 'UPLOADING' && (
                     <button
                       type="button"
                       onClick={handleRemoveIcon}
@@ -541,19 +777,38 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
                   )}
                 </div>
 
-                {/* Progress Bar */}
-                {iconUploadProgress !== null && (
+                {/* Status Indicator & Progress Bar */}
+                {iconUploadState === 'UPLOADING' && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] text-amber-400 font-mono">
                       <span>Uploading image...</span>
-                      <span>{iconUploadProgress}%</span>
+                      <span>{iconUploadProgress || 0}%</span>
                     </div>
-                    <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                    <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
                       <div 
-                        className="bg-amber-500 h-full transition-all duration-300"
-                        style={{ width: `${iconUploadProgress}%` }}
+                        className="bg-amber-500 h-full transition-all duration-200" 
+                        style={{ width: `${iconUploadProgress || 0}%` }}
                       />
                     </div>
+                  </div>
+                )}
+
+                {iconUploadState === 'SUCCESS' && (
+                  <div className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Image uploaded successfully ✓</span>
+                  </div>
+                )}
+
+                {iconUploadState === 'CANCELED' && (
+                  <div className="text-[11px] text-amber-400 font-medium">
+                    Upload canceled. Click Retry Upload to try again.
+                  </div>
+                )}
+
+                {iconUploadState === 'ERROR' && (
+                  <div className="text-[11px] text-red-400 font-medium">
+                    Upload failed. Click Retry Upload to try again.
                   </div>
                 )}
               </div>
@@ -696,9 +951,9 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
             </div>
 
             {/* Screenshots Grid */}
-            {(formData.screenshots || []).length > 0 ? (
+            {(formData.screenshots || []).filter(u => u && u.trim() !== '').length > 0 ? (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-1">
-                {(formData.screenshots || []).map((url, idx) => (
+                {(formData.screenshots || []).filter(u => u && u.trim() !== '').map((url, idx) => (
                   <div key={idx} className="relative group aspect-video bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
                     <img src={url} alt={`Screenshot ${idx}`} className="w-full h-full object-cover" />
                     <button
@@ -825,11 +1080,11 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
 
             <button
               type="submit"
-              disabled={saving || iconUploadProgress !== null || apkUploadProgress !== null || screenshotUploadProgress !== null}
-              className="flex-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black py-3 rounded-2xl shadow-lg transition flex items-center justify-center gap-2"
+              disabled={saving || iconUploadState === 'UPLOADING' || apkUploadState === 'UPLOADING' || screenshotUploadState === 'UPLOADING'}
+              className="flex-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black py-3 rounded-2xl shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {saving ? 'Saving to Firebase...' : (isEditing ? 'Update APK' : 'Publish APK')}
+              {saving ? 'Saving to Firebase...' : (iconUploadState === 'UPLOADING' || apkUploadState === 'UPLOADING' || screenshotUploadState === 'UPLOADING' ? 'Uploading file...' : (isEditing ? 'Update APK' : 'Publish APK'))}
             </button>
           </div>
         </form>

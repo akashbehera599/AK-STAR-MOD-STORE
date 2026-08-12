@@ -1,18 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { 
   User, Mail, ShieldAlert, LogOut, AppWindow, ShoppingBag, 
-  Sparkles, CheckCircle2, Clock, HelpCircle, ExternalLink 
+  Sparkles, CheckCircle2, Clock, HelpCircle, ExternalLink, Sun, Moon, Monitor
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Order, Purchase, StoreSettings } from '../types';
 import { subscribeUserOrders, subscribeUserPurchases, subscribeStoreSettings } from '../services/db';
+import { ThemeMode } from '../App';
 
 interface ProfilePageProps {
   onNavigate: (tab: string) => void;
+  themeMode?: ThemeMode;
+  setThemeMode?: (mode: ThemeMode) => void;
 }
 
-export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
-  const { user, userProfile, isAdmin, signInWithGoogle, signInWithDevAccount, signOutUser } = useAuth();
+export const ProfilePage: React.FC<ProfilePageProps> = ({ 
+  onNavigate,
+  themeMode = 'dark',
+  setThemeMode
+}) => {
+  const { user, isAdmin, signInWithGoogle, signInWithDevAccount, signOutUser } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
@@ -39,7 +46,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           <User className="w-8 h-8" />
         </div>
         <div>
-          <h2 className="text-lg font-bold text-white">Sign In to Your Account</h2>
+          <h2 className="text-lg font-black text-white">Sign In to Your Account</h2>
           <p className="text-xs text-zinc-400 mt-1">
             Sign in using Google or your Email to manage purchases, subscriptions, and access download links.
           </p>
@@ -49,7 +56,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           <button
             id="btn-profile-signin-google"
             onClick={signInWithGoogle}
-            className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black text-xs py-3.5 rounded-2xl shadow-lg transition"
+            className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black text-xs py-3.5 rounded-2xl shadow-lg transition active:scale-95"
           >
             Sign In with Google
           </button>
@@ -63,7 +70,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
             <button
               id="btn-profile-toggle-email-login"
               onClick={() => setShowEmailForm(true)}
-              className="w-full bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 font-bold text-xs py-3 rounded-2xl border border-zinc-700/50 transition"
+              className="w-full bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 font-bold text-xs py-3 rounded-2xl border border-zinc-700/50 transition active:scale-95"
             >
               Sign in with Email
             </button>
@@ -100,20 +107,20 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
 
   return (
     <div className="space-y-6 pb-24 max-w-2xl mx-auto">
-      {/* Profile Header */}
+      {/* Profile Header Card */}
       <div className="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 shadow-xl relative overflow-hidden">
         <div className="flex items-center gap-4">
-          {user.photoURL ? (
+          {user.photoURL && user.photoURL.trim() !== '' ? (
             <img src={user.photoURL} alt={user.displayName || 'User'} className="w-16 h-16 rounded-2xl object-cover border-2 border-amber-500/40 shrink-0 shadow-md" />
           ) : (
-            <div className="w-16 h-16 rounded-2xl bg-amber-500/20 text-amber-400 border-2 border-amber-500/40 flex items-center justify-center font-extrabold text-2xl shrink-0">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/20 text-amber-400 border-2 border-amber-500/40 flex items-center justify-center font-black text-2xl shrink-0">
               {(user.displayName || user.email || 'U')[0].toUpperCase()}
             </div>
           )}
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-white truncate">{user.displayName || 'Customer'}</h1>
+              <h1 className="text-lg font-black text-white truncate">{user.displayName || 'Customer'}</h1>
               {isAdmin && (
                 <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1">
                   <ShieldAlert className="w-3 h-3" /> ADMIN
@@ -129,11 +136,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
         {/* User Quick Stats */}
         <div className="grid grid-cols-2 gap-3 mt-5 pt-4 border-t border-zinc-800">
           <div className="bg-zinc-950/60 p-3 rounded-2xl border border-zinc-800 text-center">
-            <p className="text-[10px] text-zinc-500 uppercase font-bold">Active Subscriptions</p>
+            <p className="text-[10px] text-zinc-500 uppercase font-extrabold">Active Subscriptions</p>
             <p className="text-base font-black text-amber-400 mt-0.5">{activePurchasesCount}</p>
           </div>
           <div className="bg-zinc-950/60 p-3 rounded-2xl border border-zinc-800 text-center">
-            <p className="text-[10px] text-zinc-500 uppercase font-bold">Total Orders</p>
+            <p className="text-[10px] text-zinc-500 uppercase font-extrabold">Total Orders</p>
             <p className="text-base font-black text-white mt-0.5">{orders.length}</p>
           </div>
         </div>
@@ -143,7 +150,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
       {isAdmin && (
         <div className="bg-gradient-to-r from-amber-500/10 to-amber-600/10 border border-amber-500/30 rounded-3xl p-5 flex items-center justify-between gap-4 shadow-lg">
           <div>
-            <div className="flex items-center gap-1.5 font-bold text-amber-400 text-xs">
+            <div className="flex items-center gap-1.5 font-black text-amber-400 text-xs">
               <ShieldAlert className="w-4 h-4" /> Admin Controls Authorized
             </div>
             <p className="text-[11px] text-zinc-400 mt-0.5">
@@ -153,10 +160,52 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
           <button
             id="btn-profile-admin-panel"
             onClick={() => onNavigate('admin')}
-            className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs px-4 py-2.5 rounded-xl shadow transition shrink-0"
+            className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs px-4 py-2.5 rounded-xl shadow transition shrink-0 active:scale-95"
           >
             Open Admin Panel
           </button>
+        </div>
+      )}
+
+      {/* Theme Preference Switcher Card */}
+      {setThemeMode && (
+        <div className="bg-zinc-900/60 border border-zinc-800 rounded-3xl p-4 space-y-2 shadow-lg">
+          <p className="text-xs font-black text-white uppercase tracking-wider px-1">Theme Appearance</p>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              id="btn-theme-dark"
+              onClick={() => setThemeMode('dark')}
+              className={`p-2.5 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                themeMode === 'dark' 
+                  ? 'bg-amber-500 text-zinc-950 border-amber-400 shadow font-black' 
+                  : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Moon className="w-3.5 h-3.5" /> Dark Mode
+            </button>
+            <button
+              id="btn-theme-light"
+              onClick={() => setThemeMode('light')}
+              className={`p-2.5 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                themeMode === 'light' 
+                  ? 'bg-amber-500 text-zinc-950 border-amber-400 shadow font-black' 
+                  : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Sun className="w-3.5 h-3.5" /> Light Mode
+            </button>
+            <button
+              id="btn-theme-system"
+              onClick={() => setThemeMode('system')}
+              className={`p-2.5 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                themeMode === 'system' 
+                  ? 'bg-amber-500 text-zinc-950 border-amber-400 shadow font-black' 
+                  : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+              }`}
+            >
+              <Monitor className="w-3.5 h-3.5" /> System
+            </button>
+          </div>
         </div>
       )}
 
@@ -233,10 +282,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
       <button
         id="btn-profile-signout"
         onClick={signOutUser}
-        className="w-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-bold text-xs py-3.5 rounded-2xl transition flex items-center justify-center gap-2"
+        className="w-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-bold text-xs py-3.5 rounded-2xl transition flex items-center justify-center gap-2 active:scale-95"
       >
         <LogOut className="w-4 h-4" /> Sign Out
       </button>
     </div>
   );
 };
+

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
 interface ConfirmationModalProps {
@@ -24,16 +24,45 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   onCancel,
   loading = false
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onCancel]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl text-left">
+    <div 
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <div 
+        className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl text-left"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <button
           id="btn-modal-close"
-          onClick={onCancel}
-          disabled={loading}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white transition p-1"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancel();
+          }}
+          aria-label="Close"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-white transition p-1 cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -53,18 +82,29 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
           <button
             id="btn-modal-cancel"
             type="button"
-            onClick={onCancel}
-            disabled={loading}
-            className="px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-xl transition"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancel();
+            }}
+            aria-label="Cancel"
+            className="px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-xl transition cursor-pointer"
           >
             {cancelLabel}
           </button>
           <button
             id="btn-modal-confirm"
             type="button"
-            onClick={onConfirm}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!loading) {
+                onConfirm();
+              }
+            }}
             disabled={loading}
-            className={`px-5 py-2 text-xs font-bold rounded-xl transition flex items-center gap-2 ${
+            aria-label={confirmLabel || "Delete plan"}
+            className={`px-5 py-2 text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer ${
+              loading ? 'opacity-70 cursor-not-allowed' : ''
+            } ${
               isDangerous 
                 ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20' 
                 : 'bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-lg shadow-amber-500/20'

@@ -19,10 +19,19 @@ import {
   subscribeStoreSettings 
 } from './services/db';
 
+export type ThemeMode = 'dark' | 'light' | 'system';
+
 function MainLayout() {
   const { user } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('home');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    try {
+      return (localStorage.getItem('akstar_theme') as ThemeMode) || 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
 
   // Selected state
   const [selectedApk, setSelectedApk] = useState<ApkItem | null>(null);
@@ -36,6 +45,33 @@ function MainLayout() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null);
   const [loadingApks, setLoadingApks] = useState<boolean>(true);
+
+  // Theme Sync Effect
+  useEffect(() => {
+    const root = document.documentElement;
+    if (themeMode === 'light') {
+      root.classList.add('light-mode');
+      root.classList.remove('dark');
+    } else if (themeMode === 'dark') {
+      root.classList.remove('light-mode');
+      root.classList.add('dark');
+    } else {
+      // System mode
+      const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (isSystemDark) {
+        root.classList.remove('light-mode');
+        root.classList.add('dark');
+      } else {
+        root.classList.add('light-mode');
+        root.classList.remove('dark');
+      }
+    }
+    try {
+      localStorage.setItem('akstar_theme', themeMode);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [themeMode]);
 
   useEffect(() => {
     // Seed initial categories/settings if empty
@@ -65,7 +101,10 @@ function MainLayout() {
     setCurrentTab(tab);
     if (tab === 'categories' && param) {
       setSelectedCategorySlug(param);
+    } else if (tab === 'search') {
+      if (param) setSearchQuery(param);
     }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -78,6 +117,7 @@ function MainLayout() {
   const handleSelectApk = (apk: ApkItem) => {
     setSelectedApk(apk);
     setCurrentTab('apk-detail');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleProceedToCheckout = (plan: PlanItem, couponCode?: string, discountAmount?: number) => {
@@ -85,14 +125,16 @@ function MainLayout() {
     setAppliedCouponCode(couponCode || '');
     setAppliedDiscountAmount(discountAmount || 0);
     setCurrentTab('checkout');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCheckoutSuccess = (orderId: string) => {
     setCurrentTab('my-apps');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100 font-sans selection:bg-amber-500 selection:text-zinc-950 flex flex-col">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-amber-500 selection:text-zinc-950 flex flex-col transition-colors duration-200">
       {/* Maintenance Mode Banner */}
       {storeSettings?.maintenanceMode && (
         <div className="bg-amber-500 text-zinc-950 text-xs font-black py-1.5 px-4 text-center">
@@ -107,7 +149,7 @@ function MainLayout() {
         </div>
       )}
 
-      {/* Main Header */}
+      {/* Main Play Store Header */}
       <Header
         currentTab={currentTab}
         onNavigate={handleNavigate}
@@ -116,13 +158,14 @@ function MainLayout() {
         onSearchSubmit={handleSearchSubmit}
       />
 
-      {/* Content Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
-        {currentTab === 'home' && (
+      {/* Main Application Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 pt-3 pb-24">
+        {(currentTab === 'home' || currentTab === 'apps') && (
           <HomePage
             apks={apks}
             categories={categories}
             loading={loadingApks}
+            viewMode={currentTab === 'apps' ? 'apps' : 'home'}
             onSelectApk={handleSelectApk}
             onSelectCategory={(slug) => handleNavigate('categories', slug)}
             onNavigate={handleNavigate}
@@ -134,6 +177,7 @@ function MainLayout() {
             apks={apks}
             initialQuery={searchQuery}
             onSelectApk={handleSelectApk}
+            onNavigate={handleNavigate}
           />
         )}
 
@@ -177,7 +221,11 @@ function MainLayout() {
         )}
 
         {currentTab === 'profile' && (
-          <ProfilePage onNavigate={handleNavigate} />
+          <ProfilePage
+            onNavigate={handleNavigate}
+            themeMode={themeMode}
+            setThemeMode={setThemeMode}
+          />
         )}
 
         {currentTab === 'admin' && (
@@ -201,3 +249,4 @@ export default function App() {
     </AuthProvider>
   );
 }
+
