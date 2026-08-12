@@ -57,11 +57,17 @@ export function validateImageFile(file: File): { valid: boolean; error?: string 
 }
 
 export function validateApkFile(file: File): { valid: boolean; error?: string } {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  if (ext !== 'apk') {
-    return { valid: false, error: 'Invalid file type. Only .apk files are allowed.' };
+  if (!file) {
+    return { valid: false, error: 'Please select a valid APK file.' };
   }
-
+  if (!file.size || file.size <= 0) {
+    return { valid: false, error: 'The selected APK file is empty (0 bytes). Please select a valid APK file.' };
+  }
+  const isApkExt = file.name.toLowerCase().endsWith('.apk');
+  const isApkMime = file.type === 'application/vnd.android.package-archive';
+  if (!isApkExt && !isApkMime) {
+    return { valid: false, error: 'Please select a valid APK file.' };
+  }
   return { valid: true };
 }
 
@@ -91,7 +97,7 @@ export const APK_ASSETS_BUCKET = BUCKETS.APK_FILES;
 
 export function sanitizeFileName(fileName: string): string {
   if (!fileName || typeof fileName !== 'string' || fileName === 'undefined' || fileName === 'null') {
-    return `file_${Date.now()}`;
+    return `file_${Date.now()}.apk`;
   }
   const parts = fileName.split('.');
   let ext = '';
@@ -108,7 +114,7 @@ export function sanitizeFileName(fileName: string): string {
     .replace(/^-+|-+$/g, '');
 
   const finalName = cleanName || 'file';
-  return ext ? `${finalName}.${ext.replace(/[^a-z0-9]/g, '')}` : finalName;
+  return ext ? `${finalName}.${ext.replace(/[^a-z0-9]/g, '')}` : `${finalName}.apk`;
 }
 
 // Determine appropriate Supabase bucket and object path based on target folder/entity
@@ -118,51 +124,49 @@ export function resolveBucketAndPath(
   entityId?: string
 ): { bucket: string; path: string } {
   const safeFileName = sanitizeFileName(fileName);
-  const safeId = entityId ? entityId.replace(/[^a-zA-Z0-9_-]/g, '') : 'general';
+  const safeId = (entityId && entityId !== 'undefined' && entityId !== 'null' && entityId.trim() !== '')
+    ? entityId.replace(/[^a-zA-Z0-9_-]/g, '') 
+    : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `apk_${Date.now()}`);
+  
   const timestamp = Date.now();
   const cleanFolder = (folderOrPath || '').toLowerCase().trim();
 
-  // Route 1: APK Images / Icons
-  if (cleanFolder.includes('icon') || cleanFolder.includes('image') || cleanFolder === 'apk-images') {
-    const uniqueName = `icon-${timestamp}-${safeFileName}`;
+  // Route 1: Icons/Logos -> bucket "app-images", path: "{uuid}/{timestamp}-{safeFileName}"
+  if (cleanFolder.includes('icon') || cleanFolder.includes('image') || cleanFolder === 'apk-images' || cleanFolder === 'app-images') {
     return {
-      bucket: BUCKETS.APK_IMAGES,
-      path: `apps/${safeId}/${uniqueName}`
+      bucket: BUCKETS.APP_IMAGES,
+      path: `${safeId}/${timestamp}-${safeFileName}`
     };
   }
 
-  // Route 2: Screenshots
-  if (cleanFolder.includes('screenshot') || cleanFolder === 'apk-screenshots') {
-    const uniqueName = `screenshot-${timestamp}-${safeFileName}`;
+  // Route 2: Screenshots -> bucket "app-screenshots", path: "{uuid}/{timestamp}-{safeFileName}"
+  if (cleanFolder.includes('screenshot') || cleanFolder === 'apk-screenshots' || cleanFolder === 'app-screenshots' || cleanFolder === 'screenshots') {
     return {
-      bucket: BUCKETS.APK_SCREENSHOTS,
-      path: `apps/${safeId}/${uniqueName}`
+      bucket: BUCKETS.APP_SCREENSHOTS,
+      path: `${safeId}/${timestamp}-${safeFileName}`
     };
   }
 
-  // Route 3: Payment Proofs
+  // Route 3: Payment Proofs -> bucket "payment-proofs"
   if (cleanFolder.includes('payment') || cleanFolder.includes('proof')) {
-    const uniqueName = `proof-${timestamp}-${safeFileName}`;
     return {
       bucket: BUCKETS.PAYMENT_PROOFS,
-      path: `proofs/${safeId}/${uniqueName}`
+      path: `${safeId}/${timestamp}-${safeFileName}`
     };
   }
 
-  // Route 4: Store Assets (logo, banners, qr)
+  // Route 4: Store Assets (logo, banners, qr) -> bucket "store-assets"
   if (cleanFolder.includes('store') || cleanFolder.includes('banner') || cleanFolder.includes('logo') || cleanFolder.includes('qr')) {
-    const uniqueName = `asset-${timestamp}-${safeFileName}`;
     return {
       bucket: BUCKETS.STORE_ASSETS,
-      path: `assets/${uniqueName}`
+      path: `assets/${timestamp}-${safeFileName}`
     };
   }
 
-  // Route 5: APK Files (.apk binary)
-  const uniqueName = `app-${timestamp}-${safeFileName}`;
+  // Route 5: APK Files (.apk binary) -> bucket "apk-files", path: "{uuid}/{timestamp}-{safeFileName}"
   return {
     bucket: BUCKETS.APK_FILES,
-    path: `apps/${safeId}/${uniqueName}`
+    path: `${safeId}/${timestamp}-${safeFileName}`
   };
 }
 
@@ -174,66 +178,64 @@ export function uploadFileWithTask(
   entityId?: string
 ): UploadTaskHandler {
   let isCanceled = false;
+  let progressInterval: any = null;
   const { bucket, path } = resolveBucketAndPath(folderOrPath, file.name, entityId);
 
   const promise = new Promise<UploadTaskResult>(async (resolve, reject) => {
+    const cleanup = () => {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+        progressInterval = null;
+      }
+    };
+
     try {
       if (!file) throw new Error('No file selected.');
-      if (!bucket) throw new Error('Supabase Storage bucket is missing.');
-      if (!path || path.trim() === '') throw new Error('Storage file path is empty.');
+      if (file.size <= 0) throw new Error('Selected file is empty (0 bytes).');
+      if (!bucket) throw new Error("Supabase Storage bucket 'apk-files' is missing.");
+      if (!path || path.trim() === '' || path === '/' || path.includes('undefined')) {
+        throw new Error('Invalid file path generated for storage.');
+      }
 
       if (!isSupabaseConfigured()) {
         throw new Error('Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
       }
 
-      const contentType = file.type || (file.name.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'image/png');
+      const contentType = file.type || (file.name.toLowerCase().endsWith('.apk') ? 'application/vnd.android.package-archive' : 'image/png');
 
-      console.log('[SUPABASE STORAGE UPLOAD]', {
-        bucket,
-        path,
+      console.log('[APK] Direct upload starting:', {
         fileName: file.name,
         fileSize: file.size,
         contentType,
+        bucket,
+        path
       });
 
-      if (onProgress) onProgress(15);
-
       if (isCanceled) {
+        cleanup();
         reject(new Error('Upload was canceled.'));
         return;
       }
 
-      let uploadResult = await supabase.storage.from(bucket).upload(path, file, {
+      let currentProgress = 10;
+      if (onProgress) onProgress(currentProgress);
+
+      progressInterval = setInterval(() => {
+        if (currentProgress < 85) {
+          currentProgress += Math.floor(Math.random() * 8) + 3;
+          if (currentProgress > 85) currentProgress = 85;
+          if (onProgress) onProgress(currentProgress);
+        }
+      }, 250);
+
+      // Perform direct upload to target bucket in Supabase Storage
+      const uploadResult = await supabase.storage.from(bucket).upload(path, file, {
         cacheControl: '3600',
         upsert: true,
-        contentType,
+        contentType
       });
 
-      // Auto-create bucket if missing
-      if (uploadResult.error) {
-        const errMsg = uploadResult.error.message || String(uploadResult.error);
-        if (
-          errMsg.includes('not found') || 
-          errMsg.includes('bucket_not_found') || 
-          errMsg.includes('Bucket not found') || 
-          (uploadResult.error as any).status === 404
-        ) {
-          console.warn(`[SUPABASE STORAGE] Bucket "${bucket}" missing. Attempting auto-creation...`);
-          try {
-            const isPublic = bucket !== BUCKETS.PAYMENT_PROOFS;
-            const { error: createErr } = await supabase.storage.createBucket(bucket, { public: isPublic });
-            if (!createErr) {
-              uploadResult = await supabase.storage.from(bucket).upload(path, file, {
-                cacheControl: '3600',
-                upsert: true,
-                contentType,
-              });
-            }
-          } catch (createErr) {
-            console.warn('[SUPABASE STORAGE] Auto create bucket failed:', createErr);
-          }
-        }
-      }
+      cleanup();
 
       if (isCanceled) {
         reject(new Error('Upload was canceled.'));
@@ -241,11 +243,15 @@ export function uploadFileWithTask(
       }
 
       if (uploadResult.error) {
-        console.error('[SUPABASE STORAGE ERROR]', uploadResult.error);
-        throw new Error(`Supabase Storage bucket "${bucket}" upload failed: ${uploadResult.error.message}`);
+        console.error('[APK STORAGE RESULT] Error:', uploadResult.error);
+        const formatted = formatStorageError(uploadResult.error);
+        throw new Error(formatted);
       }
 
-      if (onProgress) onProgress(80);
+      console.log('[APK STORAGE RESULT] Success:', {
+        storagePath: path,
+        bucket
+      });
 
       let publicUrl = '';
       let signedUrl = '';
@@ -271,6 +277,7 @@ export function uploadFileWithTask(
         bucket
       });
     } catch (err: any) {
+      cleanup();
       const formatted = formatStorageError(err);
       reject(new Error(formatted));
     }
@@ -279,6 +286,7 @@ export function uploadFileWithTask(
   return {
     cancel: () => {
       isCanceled = true;
+      if (progressInterval) clearInterval(progressInterval);
     },
     promise
   };

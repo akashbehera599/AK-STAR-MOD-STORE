@@ -1,13 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBSNPcLi6d6wNJks2tyPiMEP3q8DyYQnGU",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "ardent-runway-hn50x.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "ardent-runway-hn50x",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "ardent-runway-hn50x.firebasestorage.app",
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "804472875332",
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:804472875332:web:c51542c36013271ae24f11"
 };
@@ -32,4 +30,3 @@ try {
 }
 
 export const db = dbInstance;
-export const storage = getStorage(app);

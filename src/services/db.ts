@@ -15,7 +15,8 @@ import {
   Unsubscribe 
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, BUCKETS } from '../lib/supabase';
+import { getStoragePublicUrl, deleteStorageFile } from './storage';
 import { isAdminEmail } from '../lib/admin';
 import { 
   ApkItem, 
@@ -211,95 +212,321 @@ export async function deleteCategory(id: string): Promise<void> {
 }
 
 // ================= APKS =================
-export function subscribeApks(callback: (apks: ApkItem[]) => void, includeInactive = false): Unsubscribe {
-  const apksCol = collection(db, 'apks');
-  const q = includeInactive 
-    ? query(apksCol, orderBy('createdAt', 'desc'))
-    : query(apksCol, where('isActive', '==', true), orderBy('createdAt', 'desc'));
 
-  return onSnapshot(q, (snap) => {
-    const list: ApkItem[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as ApkItem);
-    });
-    callback(list);
-  }, (err) => {
-    console.error('Apks subscribe error:', err);
-    // Fallback without orderBy if index is missing initially
-    const simpleQ = includeInactive ? apksCol : query(apksCol, where('isActive', '==', true));
-    return onSnapshot(simpleQ, (fallbackSnap) => {
+export function mapRowToApkItem(row: any): ApkItem {
+  if (!row) return {} as ApkItem;
+
+  const rawIconUrl = row.icon_url || row.icon_path || row.iconUrl || row.icon || '';
+  const iconUrl = getStoragePublicUrl(rawIconUrl, BUCKETS.APP_IMAGES);
+
+  const rawApkUrl = row.apk_url || row.apk_path || row.download_url || row.downloadUrl || '';
+  const externalUrl = row.external_download_url || row.externalDownloadUrl || '';
+  let finalDownloadUrl = externalUrl || rawApkUrl;
+  
+  if (!finalDownloadUrl && rawApkUrl) {
+    finalDownloadUrl = getStoragePublicUrl(rawApkUrl, BUCKETS.APK_FILES);
+  }
+
+  let processedScreenshots: string[] = [];
+  const rawScreenshots = row.screenshots || row.screenshot_urls || row.screenshotUrls || [];
+  if (Array.isArray(rawScreenshots)) {
+    processedScreenshots = rawScreenshots.map((s: string) => getStoragePublicUrl(s, BUCKETS.APP_SCREENSHOTS));
+  } else if (typeof rawScreenshots === 'string') {
+    try {
+      const parsed = JSON.parse(rawScreenshots);
+      if (Array.isArray(parsed)) {
+        processedScreenshots = parsed.map((s: string) => getStoragePublicUrl(s, BUCKETS.APP_SCREENSHOTS));
+      }
+    } catch (e) {
+      if (rawScreenshots.trim()) {
+        processedScreenshots = [getStoragePublicUrl(rawScreenshots, BUCKETS.APP_SCREENSHOTS)];
+      }
+    }
+  }
+
+  const title = row.title || row.name || 'Untitled App';
+  const categoryName = row.category || row.category_name || row.categoryName || 'General';
+  
+  let features: string[] = [];
+  const rawFeatures = row.mod_features || row.features;
+  if (Array.isArray(rawFeatures)) {
+    features = rawFeatures;
+  } else if (typeof rawFeatures === 'string') {
+    if (rawFeatures.startsWith('[') && rawFeatures.endsWith(']')) {
+      try { features = JSON.parse(rawFeatures); } catch (e) { features = rawFeatures.split(',').map(s => s.trim()); }
+    } else {
+      features = rawFeatures.split(',').map(s => s.trim()).filter(Boolean);
+    }
+  }
+  if (!features.length) {
+    features = ['Premium Unlocked', 'VIP MOD'];
+  }
+
+  const isFree = row.free_download !== undefined ? Boolean(row.free_download) : (row.is_free !== undefined ? Boolean(row.is_free) : true);
+  const isFeatured = row.featured_vip !== undefined ? Boolean(row.featured_vip) : (row.is_featured !== undefined ? Boolean(row.is_featured) : Boolean(row.featured));
+  const isActive = row.active_visible !== undefined ? Boolean(row.active_visible) : (row.active !== undefined ? Boolean(row.active) : (row.is_active !== undefined ? Boolean(row.is_active) : (row.status === 'published' || row.status === 'active' || row.status === undefined)));
+
+  return {
+    id: String(row.id),
+    name: title,
+    slug: row.slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    description: row.description || '',
+    shortDescription: row.description ? row.description.slice(0, 120) : '',
+    category: categoryName,
+    categoryId: row.category_id || '',
+    categoryName: categoryName,
+    version: row.version || '1.0.0',
+    androidVersion: row.android_requirement || row.android_version || '7.0+',
+    size: row.file_size || row.size || '45 MB',
+    icon: iconUrl || rawIconUrl,
+    iconUrl: iconUrl || rawIconUrl,
+    icon_path: rawIconUrl,
+    screenshots: processedScreenshots,
+    screenshotUrls: processedScreenshots,
+    features: features,
+    changelog: row.changelog || 'Initial release',
+    downloadMethod: row.download_method || (externalUrl ? 'external' : 'upload'),
+    apkFilePath: rawApkUrl,
+    apk_file_path: rawApkUrl,
+    apkFileName: row.apk_file_name || '',
+    externalDownloadUrl: externalUrl,
+    downloadUrl: finalDownloadUrl,
+    isFree: isFree,
+    isPremium: !isFree,
+    isFeatured: isFeatured,
+    isActive: isActive,
+    rating: Number(row.rating || 4.8),
+    reviewsCount: Number(row.reviews_count || 0),
+    downloadsCount: Number(row.download_count || row.downloads_count || 0),
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+}
+
+export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase client is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.');
+  }
+
+  const now = new Date().toISOString();
+  
+  // Ensure ID is a valid UUID or generate a new valid UUID
+  let safeId = apk.id;
+  const isUuid = safeId && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(safeId);
+  if (!isUuid) {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      safeId = crypto.randomUUID();
+    } else {
+      safeId = '10000000-0000-4000-8000-' + Date.now().toString(16).padStart(12, '0');
+    }
+  }
+
+  const title = (apk.name || (apk as any).title || 'Untitled App').trim();
+  const category = (apk.category || 'General').trim();
+  const iconUrl = apk.iconUrl || apk.icon || apk.icon_path || '';
+  const apkUrl = apk.downloadUrl || apk.apk_file_path || apk.apkFilePath || '';
+  const externalUrl = (apk.externalDownloadUrl || '').trim();
+  const screenshots = apk.screenshots || apk.screenshotUrls || [];
+
+  const isActive = apk.isActive !== false;
+  const isFree = apk.isFree ?? false;
+  const isFeatured = apk.isFeatured ?? false;
+
+  let modFeaturesStr = '';
+  if (Array.isArray(apk.features)) {
+    modFeaturesStr = apk.features.join(', ');
+  } else if (typeof apk.features === 'string') {
+    modFeaturesStr = apk.features;
+  } else {
+    modFeaturesStr = 'Premium Unlocked, VIP MOD';
+  }
+
+  const payload = removeUndefinedFields({
+    id: safeId,
+    title: title,
+    category: category,
+    version: apk.version || '1.0.0',
+    android_requirement: apk.androidVersion || '7.0+',
+    file_size: apk.size || apk.apkFileSize || '45 MB',
+    icon_url: iconUrl,
+    apk_url: apkUrl,
+    external_download_url: externalUrl,
+    description: apk.description || '',
+    mod_features: modFeaturesStr,
+    changelog: apk.changelog || 'Initial release',
+    screenshots: screenshots,
+    free_download: isFree,
+    featured_vip: isFeatured,
+    active_visible: isActive,
+    download_count: apk.downloadsCount || 0,
+    created_at: apk.createdAt || now,
+    updated_at: now
+  });
+
+  console.log(`[SUPABASE SAVE] Inserting/updating record "${safeId}" into public.apks...`, payload);
+  const { data, error } = await supabase
+    .from('apks')
+    .upsert(payload, { onConflict: 'id' })
+    .select();
+
+  if (error) {
+    console.error('[SUPABASE SAVE ERROR]', error);
+    let formattedError = error.message || error.details || error.hint || String(error);
+    if (error.code === 'PGRST205' || formattedError.includes('schema cache') || formattedError.includes('not found')) {
+      formattedError = "Could not find the table 'public.apks' in Supabase. Please run the SQL migration script in your Supabase SQL Editor.";
+    }
+    throw new Error(`Database save failed: ${formattedError}`);
+  }
+
+  console.log('[SUPABASE SAVE SUCCESS]', data?.[0] || safeId);
+  return safeId;
+}
+
+export async function fetchApksFromSupabase(includeInactive = false): Promise<ApkItem[]> {
+  if (!isSupabaseConfigured()) return [];
+
+  try {
+    const { data, error } = await supabase.from('apks').select('*').order('created_at', { ascending: false });
+
+    if (!error && data) {
+      const mapped = data.map(mapRowToApkItem);
+      const filtered = includeInactive ? mapped : mapped.filter(a => a.isActive);
+      console.log(`[APP FETCH SUCCESS] Loaded ${filtered.length} apps from Supabase table "apks"`);
+      return filtered;
+    } else if (error) {
+      console.warn('[APP FETCH ERROR]', error.message);
+    }
+  } catch (e) {
+    console.warn('[APP FETCH EXCEPTION] Table "apks":', e);
+  }
+
+  return [];
+}
+
+export function subscribeApks(callback: (apks: ApkItem[]) => void, includeInactive = false): Unsubscribe {
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const sbApks = await fetchApksFromSupabase(includeInactive);
+      if (isSubscribed) {
+        callback(sbApks);
+      }
+    } catch (err) {
+      console.warn('[SUPABASE LOAD WARNING]', err);
+    }
+  };
+
+  // 1. Initial Supabase Fetch
+  loadFromSupabase();
+
+  // 2. Realtime Subscription to Supabase apks table
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel('public_apks_changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'apks' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {
+      console.warn('[SUPABASE REALTIME WARNING]', e);
+    }
+  }
+
+  // 3. Fallback Firestore read if Supabase table is empty or unpopulated
+  const apksCol = collection(db, 'apks');
+  const simpleQ = includeInactive ? apksCol : query(apksCol, where('isActive', '==', true));
+  const fsUnsub = onSnapshot(simpleQ, async (snap) => {
+    const sbApks = await fetchApksFromSupabase(includeInactive);
+    if (sbApks.length === 0 && isSubscribed) {
       const list: ApkItem[] = [];
-      fallbackSnap.forEach((docSnap) => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as ApkItem);
+      snap.forEach((docSnap) => {
+        list.push(mapRowToApkItem({ id: docSnap.id, ...docSnap.data() }));
       });
       callback(list);
-    });
+    }
+  }, (err) => {
+    console.warn('Firestore fallback note:', err);
   });
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) {
+      try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    }
+    if (fsUnsub) {
+      fsUnsub();
+    }
+  };
 }
 
 export async function getApkBySlugOrId(identifier: string): Promise<ApkItem | null> {
-  // First check by ID
-  const idRef = doc(db, 'apks', identifier);
-  const idSnap = await getDoc(idRef);
-  if (idSnap.exists()) {
-    return { id: idSnap.id, ...idSnap.data() } as ApkItem;
+  if (!identifier) return null;
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data: idData } = await supabase.from('apks').select('*').eq('id', identifier).maybeSingle();
+      if (idData) return mapRowToApkItem(idData);
+
+      const { data: titleData } = await supabase.from('apks').select('*').eq('title', identifier).maybeSingle();
+      if (titleData) return mapRowToApkItem(titleData);
+    } catch (e) {}
   }
 
-  // Next check by slug
-  const q = query(collection(db, 'apks'), where('slug', '==', identifier));
-  const qSnap = await getDocs(q);
-  if (!qSnap.empty) {
-    const first = qSnap.docs[0];
-    return { id: first.id, ...first.data() } as ApkItem;
-  }
+  try {
+    const idRef = doc(db, 'apks', identifier);
+    const idSnap = await getDoc(idRef);
+    if (idSnap.exists()) {
+      return mapRowToApkItem({ id: idSnap.id, ...idSnap.data() });
+    }
+  } catch (e) {}
 
   return null;
 }
 
 export async function addApk(apk: Partial<ApkItem>): Promise<string> {
-  const now = new Date().toISOString();
-  if (apk.id) {
-    const docRef = doc(db, 'apks', apk.id);
-    const { id, ...rest } = apk;
-    await setDoc(docRef, removeUndefinedFields({
-      ...rest,
-      createdAt: now,
-      updatedAt: now
-    }), { merge: true });
-    return apk.id;
-  }
-
-  const docRef = await addDoc(collection(db, 'apks'), removeUndefinedFields({
-    ...apk,
-    createdAt: now,
-    updatedAt: now
-  }));
-  return docRef.id;
+  const savedId = await upsertSupabaseApk(apk);
+  return savedId;
 }
 
 export async function updateApk(id: string, apk: Partial<ApkItem>): Promise<void> {
-  const docRef = doc(db, 'apks', id);
-  const { id: _, ...rest } = apk;
-  await updateDoc(docRef, removeUndefinedFields({
-    ...rest,
-    updatedAt: new Date().toISOString()
-  }));
+  await upsertSupabaseApk({ ...apk, id });
 }
 
 export async function deleteApk(id: string): Promise<void> {
-  // Check if purchases exist for safety
-  const purchasesQ = query(collection(db, 'purchases'), where('apkId', '==', id));
-  const pSnap = await getDocs(purchasesQ);
-  
-  if (!pSnap.empty) {
-    // Soft disable to preserve purchase history integrity
-    await updateDoc(doc(db, 'apks', id), {
-      isActive: false,
-      updatedAt: new Date().toISOString()
-    });
-  } else {
-    // Delete cleanly
-    await deleteDoc(doc(db, 'apks', id));
+  if (!id) return;
+
+  // Cleanup Storage files if possible
+  try {
+    const existing = await getApkBySlugOrId(id);
+    if (existing) {
+      if (existing.icon_path || existing.iconUrl) {
+        await deleteStorageFile(existing.icon_path || existing.iconUrl);
+      }
+      if (existing.apk_file_path || existing.apkFilePath) {
+        await deleteStorageFile(existing.apk_file_path || existing.apkFilePath);
+      }
+      if (Array.isArray(existing.screenshots)) {
+        for (const scr of existing.screenshots) {
+          await deleteStorageFile(scr);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Storage cleanup prior to app deletion note:', err);
+  }
+
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase.from('apks').delete().eq('id', id);
+    if (error) {
+      console.error('[SUPABASE DELETE ERROR]', error);
+      throw new Error(`Database delete failed: ${error.message}`);
+    }
+    console.log(`[SUPABASE DELETE SUCCESS] Deleted app "${id}" from public.apks`);
   }
 }
 

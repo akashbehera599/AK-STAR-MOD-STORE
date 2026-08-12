@@ -6,7 +6,8 @@ import {
 import { ApkItem, PlanItem, Purchase } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { checkApkAccess, getPlansForApk, validateCoupon } from '../services/db';
-import { getSignedDownloadUrl } from '../services/storage';
+import { getSignedDownloadUrl, getStoragePublicUrl } from '../services/storage';
+import { BUCKETS } from '../lib/supabase';
 import { ReviewSection } from '../components/ReviewSection';
 
 interface ApkDetailPageProps {
@@ -84,10 +85,15 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
     }
 
     if (apk.isFree) {
-      if (apk.downloadUrl) {
-        window.open(apk.downloadUrl, '_blank');
+      let freeUrl = apk.downloadUrl || apk.externalDownloadUrl;
+      const filePath = apk.apk_file_path || apk.apkFilePath;
+      if (!freeUrl && filePath) {
+        freeUrl = getStoragePublicUrl(filePath, BUCKETS.APK_FILES);
+      }
+      if (freeUrl) {
+        window.open(freeUrl, '_blank');
       } else {
-        alert('Free APK download link is being updated by admin.');
+        alert('Free APK download link is being prepared by admin.');
       }
       return;
     }
@@ -100,11 +106,12 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
       let downloadUrl = access.purchase?.downloadUrl || apk.downloadUrl || apk.externalDownloadUrl;
       const filePath = apk.apk_file_path || apk.apkFilePath;
 
-      // If stored in Supabase Storage, generate a secure, short-lived signed URL (300s)
       if (filePath) {
-        const signed = await getSignedDownloadUrl('apk-assets', filePath, 300);
+        const signed = await getSignedDownloadUrl(BUCKETS.APK_FILES, filePath, 300);
         if (signed) {
           downloadUrl = signed;
+        } else if (!downloadUrl) {
+          downloadUrl = getStoragePublicUrl(filePath, BUCKETS.APK_FILES);
         }
       }
 

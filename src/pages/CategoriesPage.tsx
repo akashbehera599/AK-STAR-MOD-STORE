@@ -21,7 +21,11 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
   const activeApks = apks.filter(apk => {
     if (!apk.isActive) return false;
     if (activeCategory === 'all') return true;
-    return apk.category.toLowerCase() === activeCategory.toLowerCase();
+    const catLower = activeCategory.toLowerCase();
+    return (
+      apk.category.toLowerCase() === catLower ||
+      (apk.categoryName && apk.categoryName.toLowerCase() === catLower)
+    );
   });
 
   return (
@@ -57,8 +61,11 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({
         </button>
 
         {categories.map((cat) => {
-          const count = apks.filter(a => a.isActive && a.category.toLowerCase() === cat.slug.toLowerCase()).length;
-          const isSelected = activeCategory.toLowerCase() === cat.slug.toLowerCase();
+          const count = apks.filter(a => a.isActive && (
+            a.category.toLowerCase() === cat.slug.toLowerCase() ||
+            a.category.toLowerCase() === cat.name.toLowerCase()
+          )).length;
+          const isSelected = activeCategory.toLowerCase() === cat.slug.toLowerCase() || activeCategory.toLowerCase() === cat.name.toLowerCase();
 
           return (
             <button

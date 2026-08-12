@@ -28,30 +28,30 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !loading) {
         onCancel();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onCancel]);
+  }, [isOpen, onCancel, loading]);
 
   if (!isOpen) return null;
 
   return (
     <div 
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fadeIn overflow-y-auto"
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) {
+        if (e.target === e.currentTarget && !loading) {
           onCancel();
         }
       }}
     >
       <div 
-        className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl text-left"
+        className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl text-left my-auto shrink-0"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <button
@@ -62,23 +62,23 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             onCancel();
           }}
           aria-label="Close"
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white transition p-1 cursor-pointer"
+          className="absolute top-4 right-4 text-zinc-400 hover:text-white transition p-2 rounded-xl hover:bg-zinc-800/80 cursor-pointer touch-manipulation"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-3 mb-3">
-          <div className={`p-2.5 rounded-xl ${isDangerous ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+        <div className="flex items-center gap-3 mb-3 pr-8">
+          <div className={`p-2.5 rounded-xl shrink-0 ${isDangerous ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
             <AlertTriangle className="w-6 h-6" />
           </div>
-          <h3 className="text-lg font-bold text-white">{title}</h3>
+          <h3 className="text-base sm:text-lg font-bold text-white leading-tight">{title}</h3>
         </div>
 
-        <p className="text-sm text-zinc-300 mb-6 leading-relaxed">
+        <p className="text-xs sm:text-sm text-zinc-300 mb-6 leading-relaxed">
           {message}
         </p>
 
-        <div className="flex items-center justify-end gap-3">
+        <div className="flex items-center justify-end gap-2.5 sm:gap-3 pt-2 border-t border-zinc-800/60">
           <button
             id="btn-modal-cancel"
             type="button"
@@ -87,7 +87,7 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
               onCancel();
             }}
             aria-label="Cancel"
-            className="px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-xl transition cursor-pointer"
+            className="flex-1 sm:flex-none min-h-[44px] px-4 py-2.5 text-xs sm:text-sm font-semibold text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 rounded-xl transition flex items-center justify-center cursor-pointer touch-manipulation select-none"
           >
             {cancelLabel}
           </button>
@@ -101,9 +101,9 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
               }
             }}
             disabled={loading}
-            aria-label={confirmLabel || "Delete plan"}
-            className={`px-5 py-2 text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer ${
-              loading ? 'opacity-70 cursor-not-allowed' : ''
+            aria-label={confirmLabel || "Delete"}
+            className={`flex-1 sm:flex-none min-h-[44px] px-5 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer touch-manipulation select-none ${
+              loading ? 'opacity-70 cursor-not-allowed' : 'active:scale-95'
             } ${
               isDangerous 
                 ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/20' 
@@ -111,9 +111,9 @@ export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             }`}
           >
             {loading ? (
-              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />
             ) : null}
-            {confirmLabel}
+            <span className="truncate">{confirmLabel}</span>
           </button>
         </div>
       </div>

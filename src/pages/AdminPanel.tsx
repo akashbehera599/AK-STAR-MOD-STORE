@@ -124,7 +124,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
 
     setLoadingAction(true);
     try {
-      const data: Omit<ApkItem, 'id'> = {
+      const targetId = editingApk?.id || apkPayload.id;
+
+      const data: Partial<ApkItem> = {
+        id: targetId,
         name: apkPayload.name.trim(),
         slug: apkPayload.slug || apkPayload.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         description: apkPayload.description || '',
@@ -137,12 +140,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
         size: apkPayload.size || '45 MB',
         icon: apkPayload.icon || apkPayload.iconUrl || '',
         iconUrl: apkPayload.iconUrl || apkPayload.icon || '',
+        icon_path: apkPayload.icon_path || apkPayload.icon || apkPayload.iconUrl || '',
         screenshots: apkPayload.screenshots || apkPayload.screenshotUrls || [],
         screenshotUrls: apkPayload.screenshotUrls || apkPayload.screenshots || [],
         features: apkPayload.features || ['Premium Unlocked', 'No Ads'],
         changelog: apkPayload.changelog || 'Initial release',
         downloadMethod: apkPayload.downloadMethod || 'upload',
-        apkFilePath: apkPayload.apkFilePath || '',
+        apkFilePath: apkPayload.apkFilePath || apkPayload.apk_file_path || '',
+        apk_file_path: apkPayload.apk_file_path || apkPayload.apkFilePath || '',
         apkFileName: apkPayload.apkFileName || '',
         apkFileSize: apkPayload.apkFileSize || '',
         externalDownloadUrl: apkPayload.externalDownloadUrl || '',
@@ -157,10 +162,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
         updatedAt: new Date().toISOString()
       };
 
+      console.log('[APP SAVE]', {
+        appId: targetId,
+        title: data.name,
+        category: data.category,
+        downloadMethod: data.downloadMethod
+      });
+
       if (editingApk?.id) {
         await updateApk(editingApk.id, data);
+        console.log('[APP SAVE] App updated successfully');
       } else {
-        await addApk(data);
+        const savedId = await addApk(data);
+        console.log('[APP SAVE] App created successfully with ID:', savedId);
       }
 
       setShowApkModal(false);

@@ -23,8 +23,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 // Exact bucket definitions for AK STAR MOD STORE
 export const BUCKETS = {
   APK_FILES: 'apk-files',
-  APK_IMAGES: 'apk-images',
-  APK_SCREENSHOTS: 'apk-screenshots',
+  APP_IMAGES: 'app-images',
+  APK_IMAGES: 'app-images',
+  APP_SCREENSHOTS: 'app-screenshots',
+  SCREENSHOTS: 'app-screenshots',
+  APK_SCREENSHOTS: 'app-screenshots',
   PAYMENT_PROOFS: 'payment-proofs',
   STORE_ASSETS: 'store-assets',
 } as const;
