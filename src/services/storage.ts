@@ -21,11 +21,11 @@ export function formatStorageError(error: any): string {
   if (!error) return 'An unknown storage error occurred.';
   const msg = error?.message || error?.error_description || String(error);
   
-  if (msg.includes('Bucket not found') || msg.includes('bucket_not_found')) {
+  if (msg.includes('Bucket not found') || msg.includes('bucket_not_found') || msg.includes('not found')) {
     return 'Supabase Storage bucket missing. Please ensure the target bucket exists in your Supabase project.';
   }
   if (msg.includes('Invalid path specified in request URL') || msg.includes('Invalid path') || msg.includes('invalid_path')) {
-    return 'Invalid storage path or bucket missing in Supabase. Please ensure the storage bucket ("apk-assets", "payment-proofs", or "store-assets") exists in your Supabase project.';
+    return 'Invalid storage path specified in request URL. Please check file path format.';
   }
   if (msg.includes('row-level security') || msg.includes('RLS') || msg.includes('403') || msg.includes('Unauthorized')) {
     return 'Storage permission denied. Please verify your Supabase Storage RLS policies.';
@@ -87,7 +87,7 @@ export function validateExternalUrl(urlStr: string): { valid: boolean; error?: s
   return { valid: true };
 }
 
-export const APK_ASSETS_BUCKET = BUCKETS.APK_ASSETS;
+export const APK_ASSETS_BUCKET = BUCKETS.APK_FILES;
 
 export function sanitizeFileName(fileName: string): string {
   if (!fileName || typeof fileName !== 'string' || fileName === 'undefined' || fileName === 'null') {
@@ -118,61 +118,55 @@ export function resolveBucketAndPath(
   entityId?: string
 ): { bucket: string; path: string } {
   const safeFileName = sanitizeFileName(fileName);
-  const uuid = typeof crypto !== 'undefined' && crypto.randomUUID 
-    ? crypto.randomUUID() 
-    : `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  const uniqueName = `${uuid}-${safeFileName}`;
+  const safeId = entityId ? entityId.replace(/[^a-zA-Z0-9_-]/g, '') : 'general';
+  const timestamp = Date.now();
+  const cleanFolder = (folderOrPath || '').toLowerCase().trim();
 
-  const cleanFolder = (folderOrPath || '').replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/').trim();
+  // Route 1: APK Images / Icons
+  if (cleanFolder.includes('icon') || cleanFolder.includes('image') || cleanFolder === 'apk-images') {
+    const uniqueName = `icon-${timestamp}-${safeFileName}`;
+    return {
+      bucket: BUCKETS.APK_IMAGES,
+      path: `apps/${safeId}/${uniqueName}`
+    };
+  }
 
-  // Route 1: Payment Proofs
-  if (cleanFolder.startsWith('payment-proofs') || cleanFolder.includes('payment')) {
-    const subFolder = cleanFolder.replace(/^payment-proofs\/?/, '').replace(/^\/+|\/+$/g, '');
-    const objectPath = subFolder ? `${subFolder}/${uniqueName}` : uniqueName;
+  // Route 2: Screenshots
+  if (cleanFolder.includes('screenshot') || cleanFolder === 'apk-screenshots') {
+    const uniqueName = `screenshot-${timestamp}-${safeFileName}`;
+    return {
+      bucket: BUCKETS.APK_SCREENSHOTS,
+      path: `apps/${safeId}/${uniqueName}`
+    };
+  }
+
+  // Route 3: Payment Proofs
+  if (cleanFolder.includes('payment') || cleanFolder.includes('proof')) {
+    const uniqueName = `proof-${timestamp}-${safeFileName}`;
     return {
       bucket: BUCKETS.PAYMENT_PROOFS,
-      path: objectPath.replace(/^\/+/, '')
+      path: `proofs/${safeId}/${uniqueName}`
     };
   }
 
-  // Route 2: Store Assets
-  if (
-    cleanFolder.startsWith('store-assets') || 
-    cleanFolder.startsWith('logo') || 
-    cleanFolder.startsWith('banners') || 
-    cleanFolder.startsWith('payment-qr') || 
-    cleanFolder.startsWith('qr') || 
-    cleanFolder.startsWith('support')
-  ) {
-    let sub = 'logo';
-    if (cleanFolder.includes('banner')) sub = 'banners';
-    else if (cleanFolder.includes('qr')) sub = 'payment-qr';
-    else if (cleanFolder.includes('support')) sub = 'support';
-
-    let subFolder = cleanFolder.replace(/^store-assets\/?/, '').replace(/^\/+|\/+$/g, '');
-    if (!subFolder) subFolder = sub;
-    const objectPath = `${subFolder}/${uniqueName}`;
+  // Route 4: Store Assets (logo, banners, qr)
+  if (cleanFolder.includes('store') || cleanFolder.includes('banner') || cleanFolder.includes('logo') || cleanFolder.includes('qr')) {
+    const uniqueName = `asset-${timestamp}-${safeFileName}`;
     return {
       bucket: BUCKETS.STORE_ASSETS,
-      path: objectPath.replace(/^\/+/, '')
+      path: `assets/${uniqueName}`
     };
   }
 
-  // Route 3: APK Assets (icons, screenshots, files)
-  let category = 'files';
-  if (cleanFolder.includes('icon')) category = 'icons';
-  else if (cleanFolder.includes('screenshot')) category = 'screenshots';
-
-  const id = entityId || 'general';
-  const objectPath = `${category}/${id}/${uniqueName}`;
-
+  // Route 5: APK Files (.apk binary)
+  const uniqueName = `app-${timestamp}-${safeFileName}`;
   return {
-    bucket: APK_ASSETS_BUCKET,
-    path: objectPath.replace(/^\/+/, '')
+    bucket: BUCKETS.APK_FILES,
+    path: `apps/${safeId}/${uniqueName}`
   };
 }
 
-// Upload file directly to Supabase Storage with real progress & cancel capability
+// Pure Supabase Storage upload handler
 export function uploadFileWithTask(
   file: File,
   folderOrPath: string,
@@ -184,53 +178,90 @@ export function uploadFileWithTask(
 
   const promise = new Promise<UploadTaskResult>(async (resolve, reject) => {
     try {
+      if (!file) throw new Error('No file selected.');
+      if (!bucket) throw new Error('Supabase Storage bucket is missing.');
+      if (!path || path.trim() === '') throw new Error('Storage file path is empty.');
+
       if (!isSupabaseConfigured()) {
-        throw new Error('Supabase Storage is not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment variables.');
+        throw new Error('Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
       }
-
-      console.log({
-        bucket: APK_ASSETS_BUCKET,
-        apkId: entityId || 'general',
-        storagePath: path,
-        fileName: file.name,
-      });
-
-      if (onProgress) onProgress(10);
 
       const contentType = file.type || (file.name.endsWith('.apk') ? 'application/vnd.android.package-archive' : 'image/png');
 
-      const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
-        cacheControl: '3600',
-        upsert: true,
+      console.log('[SUPABASE STORAGE UPLOAD]', {
+        bucket,
+        path,
+        fileName: file.name,
+        fileSize: file.size,
         contentType,
       });
+
+      if (onProgress) onProgress(15);
 
       if (isCanceled) {
         reject(new Error('Upload was canceled.'));
         return;
       }
 
-      if (error) {
-        throw error;
+      let uploadResult = await supabase.storage.from(bucket).upload(path, file, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType,
+      });
+
+      // Auto-create bucket if missing
+      if (uploadResult.error) {
+        const errMsg = uploadResult.error.message || String(uploadResult.error);
+        if (
+          errMsg.includes('not found') || 
+          errMsg.includes('bucket_not_found') || 
+          errMsg.includes('Bucket not found') || 
+          (uploadResult.error as any).status === 404
+        ) {
+          console.warn(`[SUPABASE STORAGE] Bucket "${bucket}" missing. Attempting auto-creation...`);
+          try {
+            const isPublic = bucket !== BUCKETS.PAYMENT_PROOFS;
+            const { error: createErr } = await supabase.storage.createBucket(bucket, { public: isPublic });
+            if (!createErr) {
+              uploadResult = await supabase.storage.from(bucket).upload(path, file, {
+                cacheControl: '3600',
+                upsert: true,
+                contentType,
+              });
+            }
+          } catch (createErr) {
+            console.warn('[SUPABASE STORAGE] Auto create bucket failed:', createErr);
+          }
+        }
       }
 
-      if (onProgress) onProgress(100);
+      if (isCanceled) {
+        reject(new Error('Upload was canceled.'));
+        return;
+      }
+
+      if (uploadResult.error) {
+        console.error('[SUPABASE STORAGE ERROR]', uploadResult.error);
+        throw new Error(`Supabase Storage bucket "${bucket}" upload failed: ${uploadResult.error.message}`);
+      }
+
+      if (onProgress) onProgress(80);
 
       let publicUrl = '';
       let signedUrl = '';
 
       if (bucket === BUCKETS.PAYMENT_PROOFS) {
-        // Payment proofs are stored in a private bucket -> generate 1 hour signed URL
         const { data: signedData } = await supabase.storage
           .from(bucket)
           .createSignedUrl(path, 3600);
         signedUrl = signedData?.signedUrl || '';
         publicUrl = signedUrl;
       } else {
-        // Public buckets
         const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
         publicUrl = urlData.publicUrl;
       }
+
+      if (onProgress) onProgress(100);
 
       resolve({
         publicUrl,
@@ -310,7 +341,7 @@ export function getStoragePublicUrl(pathOrUrl: string, bucket: string = APK_ASSE
   return data?.publicUrl || '';
 }
 
-// Generate secure signed URL for private files (paid APK downloads or payment screenshots)
+// Generate secure signed URL for private files
 export async function getSignedDownloadUrl(
   bucket: string,
   path: string,
@@ -383,7 +414,7 @@ export async function deleteStorageFile(storagePathOrUrl: string): Promise<void>
   }
 }
 
-// Helper to convert File to Data URL for instant local UI image preview
+// Helper to convert File to Data URL
 export function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

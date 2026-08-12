@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Support both VITE_ and NEXT_PUBLIC_ prefixes
+// Standard Vite environment variables
 const supabaseUrl = 
   (import.meta.env.VITE_SUPABASE_URL as string) || 
   (import.meta.env.NEXT_PUBLIC_SUPABASE_URL as string) || 
@@ -20,8 +20,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 
+// Exact bucket definitions for AK STAR MOD STORE
 export const BUCKETS = {
-  APK_ASSETS: 'apk-assets',
+  APK_FILES: 'apk-files',
+  APK_IMAGES: 'apk-images',
+  APK_SCREENSHOTS: 'apk-screenshots',
   PAYMENT_PROOFS: 'payment-proofs',
   STORE_ASSETS: 'store-assets',
 } as const;
@@ -41,3 +44,4 @@ export function isSupabaseConfigured(): boolean {
     !key.includes('dummy_anon_key')
   );
 }
+

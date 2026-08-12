@@ -832,7 +832,7 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
                     : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                <Upload className="w-3.5 h-3.5" /> Firebase APK Upload
+                <Upload className="w-3.5 h-3.5" /> Supabase APK Upload
               </button>
 
               <button
@@ -887,7 +887,7 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
                 {apkUploadProgress !== null && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-[10px] text-amber-400 font-mono">
-                      <span>Uploading APK file to Firebase Storage...</span>
+                      <span>Uploading APK file to Supabase Storage...</span>
                       <span>{apkUploadProgress}%</span>
                     </div>
                     <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden">

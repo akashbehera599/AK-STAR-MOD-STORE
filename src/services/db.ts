@@ -256,8 +256,19 @@ export async function getApkBySlugOrId(identifier: string): Promise<ApkItem | nu
   return null;
 }
 
-export async function addApk(apk: Omit<ApkItem, 'id'>): Promise<string> {
+export async function addApk(apk: Partial<ApkItem>): Promise<string> {
   const now = new Date().toISOString();
+  if (apk.id) {
+    const docRef = doc(db, 'apks', apk.id);
+    const { id, ...rest } = apk;
+    await setDoc(docRef, removeUndefinedFields({
+      ...rest,
+      createdAt: now,
+      updatedAt: now
+    }), { merge: true });
+    return apk.id;
+  }
+
   const docRef = await addDoc(collection(db, 'apks'), removeUndefinedFields({
     ...apk,
     createdAt: now,
