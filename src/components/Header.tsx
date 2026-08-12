@@ -30,11 +30,13 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => onNavigate('home')}
             className="flex items-center gap-2.5 group text-left focus:outline-none shrink-0"
           >
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 p-0.5 shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
-              <div className="w-full h-full bg-zinc-950 rounded-[14px] flex items-center justify-center">
-                <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" />
-              </div>
-            </div>
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl overflow-hidden border border-amber-500/30 shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
+  <img
+    src="/assets/logo.png"
+    alt="AK STAR MODS"
+    className="w-full h-full object-cover"
+  />
+</div>
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-black text-base sm:text-lg tracking-tight text-white leading-none">AK STAR</span>
