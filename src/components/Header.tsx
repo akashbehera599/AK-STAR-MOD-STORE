@@ -32,10 +32,10 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl overflow-hidden border border-amber-500/30 shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
   <img
-    src="/assets/logo.png"
-    alt="AK STAR MODS"
-    className="w-full h-full object-cover"
-  />
+  src={logo}
+  alt="AK STAR MODS"
+  className="w-full h-full object-cover"
+/>
 </div>
             <div>
               <div className="flex items-center gap-1.5">
