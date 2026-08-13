@@ -11,7 +11,6 @@ import {
   where, 
   orderBy, 
   onSnapshot, 
-  serverTimestamp,
   Unsubscribe 
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
@@ -26,6 +25,7 @@ import {
   OrderStatus,
   PlanItem, 
   Purchase, 
+  PurchaseStatus,
   ReviewItem,
   StoreSettings, 
   UserProfile 
@@ -125,25 +125,38 @@ export const DEFAULT_CATEGORIES: Array<Omit<Category, 'id'>> = [
 // Seed initial default categories & store settings if not exist
 export async function seedInitialDataIfNeeded() {
   try {
-    // Check Settings
-    const settingsRef = doc(db, 'settings', 'store');
-    const settingsSnap = await getDoc(settingsRef);
-    if (!settingsSnap.exists()) {
-      if (auth.currentUser && isAdminEmail(auth.currentUser.email)) {
-        await setDoc(settingsRef, DEFAULT_STORE_SETTINGS);
-      }
-    }
-
-    // Check Categories
-    const catSnap = await getDocs(collection(db, 'categories'));
-    if (catSnap.empty) {
-      if (auth.currentUser && isAdminEmail(auth.currentUser.email)) {
+    if (isSupabaseConfigured()) {
+      // Check Categories in Supabase
+      const { data: catData } = await supabase.from('categories').select('id').limit(1);
+      if (!catData || catData.length === 0) {
         for (const cat of DEFAULT_CATEGORIES) {
-          await addDoc(collection(db, 'categories'), {
-            ...cat,
-            createdAt: new Date().toISOString()
+          const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cat_${Date.now()}_${cat.order}`;
+          await supabase.from('categories').upsert({
+            id: safeId,
+            name: cat.name,
+            slug: cat.slug,
+            active: cat.active,
+            "order": cat.order,
+            created_at: new Date().toISOString()
           });
         }
+      }
+
+      // Check Store Settings in Supabase
+      const { data: setRow } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
+      if (!setRow) {
+        await supabase.from('store_settings').upsert({
+          id: 'store',
+          website_name: DEFAULT_STORE_SETTINGS.websiteName,
+          logo_text: DEFAULT_STORE_SETTINGS.logoText,
+          upi_id: DEFAULT_STORE_SETTINGS.upiId,
+          support_email: DEFAULT_STORE_SETTINGS.supportEmail,
+          telegram_link: DEFAULT_STORE_SETTINGS.telegramLink,
+          payment_instructions: DEFAULT_STORE_SETTINGS.paymentInstructions,
+          maintenance_mode: false,
+          announcement_banner: DEFAULT_STORE_SETTINGS.announcementBanner,
+          updated_at: new Date().toISOString()
+        });
       }
     }
   } catch (err) {
@@ -151,67 +164,128 @@ export async function seedInitialDataIfNeeded() {
   }
 }
 
-// ================= STORE SETTINGS =================
-export function subscribeStoreSettings(callback: (settings: StoreSettings) => void): Unsubscribe {
-  const settingsRef = doc(db, 'settings', 'store');
-  return onSnapshot(settingsRef, (snap) => {
-    if (snap.exists()) {
-      callback(snap.data() as StoreSettings);
-    } else {
-      callback(DEFAULT_STORE_SETTINGS);
-    }
-  }, (err) => {
-    console.error('Subscribe settings error:', err);
-    callback(DEFAULT_STORE_SETTINGS);
-  });
+// ================= ROW MAPPERS =================
+export function mapRowToCategory(row: any): Category {
+  return {
+    id: String(row.id),
+    name: row.name || '',
+    slug: row.slug || (row.name ? row.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : ''),
+    iconName: row.icon_name || row.iconName || '',
+    active: row.active !== undefined ? Boolean(row.active) : true,
+    order: Number(row.order || 0)
+  };
 }
 
-export async function updateStoreSettings(data: Partial<StoreSettings>): Promise<void> {
-  const settingsRef = doc(db, 'settings', 'store');
-  await setDoc(settingsRef, removeUndefinedFields({
-    ...data,
-    updatedAt: new Date().toISOString()
-  }), { merge: true });
+export function mapRowToPlan(row: any): PlanItem {
+  return {
+    id: String(row.id),
+    apkId: String(row.apk_id || row.apkId || ''),
+    name: row.name || 'Access Plan',
+    durationDays: Number(row.duration_days || row.durationDays || 30),
+    price: Number(row.price || 0),
+    active: row.active !== undefined ? Boolean(row.active) : true
+  };
 }
 
-// ================= CATEGORIES =================
-export function subscribeCategories(callback: (categories: Category[]) => void): Unsubscribe {
-  const q = query(collection(db, 'categories'), orderBy('order', 'asc'));
-  return onSnapshot(q, (snap) => {
-    const list: Category[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as Category);
-    });
-    callback(list);
-  }, (err) => {
-    console.error('Categories error:', err);
-    callback([]);
-  });
+export function mapRowToCoupon(row: any): Coupon {
+  return {
+    id: String(row.id),
+    code: String(row.code || '').toUpperCase(),
+    discountPercent: Number(row.discount_percent || row.discountPercent || 0),
+    minPurchase: Number(row.min_purchase || row.minPurchase || 0),
+    maxDiscount: Number(row.max_discount || row.maxDiscount || 0),
+    startDate: row.start_date || row.startDate || '',
+    expiryDate: row.expiry_date || row.expiryDate || '',
+    usageLimit: Number(row.usage_limit || row.usageLimit || 0),
+    usedCount: Number(row.used_count || row.usedCount || 0),
+    perUserLimit: Number(row.per_user_limit || row.perUserLimit || 1),
+    active: row.active !== undefined ? Boolean(row.active) : true,
+    createdAt: row.created_at || row.createdAt || new Date().toISOString()
+  };
 }
 
-export async function addCategory(category: Omit<Category, 'id'>): Promise<string> {
-  const docRef = await addDoc(collection(db, 'categories'), removeUndefinedFields({
-    ...category,
-    createdAt: new Date().toISOString()
-  }));
-  return docRef.id;
+export function mapRowToStoreSettings(row: any): StoreSettings {
+  if (!row) return DEFAULT_STORE_SETTINGS;
+  return {
+    websiteName: row.website_name || row.websiteName || DEFAULT_STORE_SETTINGS.websiteName,
+    logoText: row.logo_text || row.logoText || DEFAULT_STORE_SETTINGS.logoText,
+    logoUrl: getStoragePublicUrl(row.logo_url || row.logoUrl || row.logo_path || '', BUCKETS.STORE_ASSETS),
+    logo_path: row.logo_path || row.logo_url || row.logoUrl || '',
+    faviconUrl: getStoragePublicUrl(row.favicon_url || row.faviconUrl || row.favicon_path || '', BUCKETS.STORE_ASSETS),
+    favicon_path: row.favicon_path || row.favicon_url || row.faviconUrl || '',
+    upiId: row.upi_id || row.upiId || DEFAULT_STORE_SETTINGS.upiId,
+    upiQrUrl: getStoragePublicUrl(row.upi_qr_url || row.upiQrUrl || row.payment_qr_path || '', BUCKETS.STORE_ASSETS),
+    payment_qr_path: row.payment_qr_path || row.upi_qr_url || row.upiQrUrl || '',
+    supportEmail: row.support_email || row.supportEmail || DEFAULT_STORE_SETTINGS.supportEmail,
+    telegramLink: row.telegram_link || row.telegramLink || DEFAULT_STORE_SETTINGS.telegramLink,
+    whatsappLink: row.whatsapp_link || row.whatsappLink || DEFAULT_STORE_SETTINGS.whatsappLink,
+    paymentInstructions: row.payment_instructions || row.paymentInstructions || DEFAULT_STORE_SETTINGS.paymentInstructions,
+    maintenanceMode: row.maintenance_mode !== undefined ? Boolean(row.maintenance_mode) : Boolean(row.maintenanceMode),
+    announcementBanner: row.announcement_banner || row.announcementBanner || DEFAULT_STORE_SETTINGS.announcementBanner,
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString()
+  };
 }
 
-export async function updateCategory(id: string, category: Partial<Category>): Promise<void> {
-  const docRef = doc(db, 'categories', id);
-  const { id: _, ...rest } = category;
-  await updateDoc(docRef, removeUndefinedFields({
-    ...rest,
-    updatedAt: new Date().toISOString()
-  }));
+export function mapRowToOrder(row: any): Order {
+  return {
+    id: String(row.id),
+    userId: String(row.user_id || row.userId || ''),
+    userEmail: row.user_email || row.userEmail || '',
+    userName: row.user_name || row.userName || 'User',
+    apkId: String(row.apk_id || row.apkId || ''),
+    apkName: row.apk_name || row.apkName || '',
+    apkIcon: getStoragePublicUrl(row.apk_icon || row.apkIcon || '', BUCKETS.APP_IMAGES),
+    planId: String(row.plan_id || row.planId || ''),
+    planName: row.plan_name || row.planName || '',
+    durationDays: Number(row.duration_days || row.durationDays || 30),
+    originalPrice: Number(row.original_price || row.originalPrice || 0),
+    couponCode: row.coupon_code || row.couponCode || '',
+    discountPercent: Number(row.discount_percent || row.discountPercent || 0),
+    discountAmount: Number(row.discount_amount || row.discountAmount || 0),
+    finalPrice: Number(row.final_price || row.finalPrice || 0),
+    upiId: row.upi_id || row.upiId || '',
+    utr: row.utr || '',
+    screenshotUrl: getStoragePublicUrl(row.screenshot_url || row.screenshotUrl || row.screenshot_path || '', BUCKETS.PAYMENT_PROOFS),
+    screenshot_path: row.screenshot_path || row.screenshot_url || row.screenshotUrl || '',
+    status: row.status as OrderStatus,
+    rejectionReason: row.rejection_reason || row.rejectionReason || '',
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString()
+  };
 }
 
-export async function deleteCategory(id: string): Promise<void> {
-  const docRef = doc(db, 'categories', id);
-  await deleteDoc(docRef);
+export function mapRowToPurchase(row: any): Purchase {
+  return {
+    id: String(row.id),
+    orderId: String(row.order_id || row.orderId || ''),
+    userId: String(row.user_id || row.userId || ''),
+    userEmail: row.user_email || row.userEmail || '',
+    apkId: String(row.apk_id || row.apkId || ''),
+    apkName: row.apk_name || row.apkName || '',
+    apkIcon: getStoragePublicUrl(row.apk_icon || row.apkIcon || '', BUCKETS.APP_IMAGES),
+    planName: row.plan_name || row.planName || '',
+    durationDays: Number(row.duration_days || row.durationDays || 30),
+    startDate: row.start_date || row.startDate || new Date().toISOString(),
+    expiryDate: row.expiry_date || row.expiryDate || new Date().toISOString(),
+    status: row.status as PurchaseStatus,
+    downloadUrl: row.download_url || row.downloadUrl || '',
+    createdAt: row.created_at || row.createdAt || new Date().toISOString()
+  };
 }
 
-// ================= APKS =================
+export function mapRowToReview(row: any): ReviewItem {
+  return {
+    id: String(row.id),
+    apkId: String(row.apk_id || row.apkId || ''),
+    userId: String(row.user_id || row.userId || ''),
+    userName: row.user_name || row.userName || 'Anonymous',
+    userPhotoURL: row.user_photo_url || row.userPhotoURL || '',
+    rating: Number(row.rating || 5),
+    comment: row.comment || '',
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString()
+  };
+}
 
 export function mapRowToApkItem(row: any): ApkItem {
   if (!row) return {} as ApkItem;
@@ -246,6 +320,7 @@ export function mapRowToApkItem(row: any): ApkItem {
 
   const title = row.title || row.name || 'Untitled App';
   const categoryName = row.category || row.category_name || row.categoryName || 'General';
+  const packageName = row.package_name || row.packageName || '';
   
   let features: string[] = [];
   const rawFeatures = row.mod_features || row.features;
@@ -270,6 +345,8 @@ export function mapRowToApkItem(row: any): ApkItem {
     id: String(row.id),
     name: title,
     slug: row.slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    packageName: packageName,
+    package_name: packageName,
     description: row.description || '',
     shortDescription: row.description ? row.description.slice(0, 120) : '',
     category: categoryName,
@@ -291,19 +368,221 @@ export function mapRowToApkItem(row: any): ApkItem {
     apkFileName: row.apk_file_name || '',
     externalDownloadUrl: externalUrl,
     downloadUrl: finalDownloadUrl,
+    price: Number(row.price || 0),
+    currency: row.currency || 'INR',
+    accessDuration: row.access_duration || row.accessDuration || '30 Days',
+    startDate: row.start_date || row.startDate || '',
+    expiryDate: row.expiry_date || row.expiryDate || '',
     isFree: isFree,
     isPremium: !isFree,
     isFeatured: isFeatured,
     isActive: isActive,
     rating: Number(row.rating || 4.8),
-    reviewsCount: Number(row.reviews_count || 0),
+    reviewsCount: Number(row.reviews_count || row.reviewsCount || 0),
     downloadsCount: Number(row.download_count || row.downloads_count || 0),
     tags: Array.isArray(row.tags) ? row.tags : [],
-    createdAt: row.created_at || new Date().toISOString(),
-    updatedAt: row.updated_at || new Date().toISOString(),
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
   };
 }
 
+// ================= STORE SETTINGS =================
+export function subscribeStoreSettings(callback: (settings: StoreSettings) => void): Unsubscribe {
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const { data, error } = await supabase.from('store_settings').select('*').limit(1).maybeSingle();
+      if (!error && data && isSubscribed) {
+        callback(mapRowToStoreSettings(data));
+        return;
+      }
+    } catch (e) {}
+
+    if (isSubscribed) {
+      callback(DEFAULT_STORE_SETTINGS);
+    }
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`store_settings_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'store_settings' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
+  // Fallback to Firestore if needed
+  const settingsRef = doc(db, 'settings', 'store');
+  const fsUnsub = onSnapshot(settingsRef, (snap) => {
+    if (snap.exists() && isSubscribed) {
+      callback(mapRowToStoreSettings(snap.data()));
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
+}
+
+export async function updateStoreSettings(data: Partial<StoreSettings>): Promise<void> {
+  const now = new Date().toISOString();
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: 'store',
+      website_name: data.websiteName,
+      logo_text: data.logoText,
+      logo_url: data.logoUrl || data.logo_path,
+      favicon_url: data.faviconUrl || data.favicon_path,
+      upi_id: data.upiId,
+      upi_qr_url: data.upiQrUrl || data.payment_qr_path,
+      support_email: data.supportEmail,
+      telegram_link: data.telegramLink,
+      whatsapp_link: data.whatsappLink,
+      payment_instructions: data.paymentInstructions,
+      maintenance_mode: data.maintenanceMode,
+      announcement_banner: data.announcementBanner,
+      updated_at: now
+    });
+
+    const { error } = await supabase.from('store_settings').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[SUPABASE SETTINGS UPDATE ERROR]', error);
+      throw new Error(`Store settings update failed: ${error.message}`);
+    }
+  }
+
+  try {
+    const settingsRef = doc(db, 'settings', 'store');
+    await setDoc(settingsRef, removeUndefinedFields({ ...data, updatedAt: now }), { merge: true });
+  } catch (e) {}
+}
+
+// ================= CATEGORIES =================
+export function subscribeCategories(callback: (categories: Category[]) => void): Unsubscribe {
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const { data, error } = await supabase.from('categories').select('*').order('order', { ascending: true });
+      if (!error && data && isSubscribed) {
+        callback(data.map(mapRowToCategory));
+        return;
+      }
+    } catch (e) {}
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`categories_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
+  const q = query(collection(db, 'categories'), orderBy('order', 'asc'));
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: Category[] = [];
+      snap.forEach(docSnap => list.push(mapRowToCategory({ id: docSnap.id, ...docSnap.data() })));
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
+}
+
+export async function addCategory(category: Omit<Category, 'id'>): Promise<string> {
+  const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cat_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safeId,
+      name: category.name.trim(),
+      slug: category.slug || category.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      icon_name: category.iconName || '',
+      active: category.active !== false,
+      order: category.order || 0,
+      created_at: now,
+      updated_at: now
+    });
+
+    const { error } = await supabase.from('categories').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[SUPABASE ADD CATEGORY ERROR]', error);
+      throw new Error(`Category add failed: ${error.message}`);
+    }
+  }
+
+  try {
+    await addDoc(collection(db, 'categories'), removeUndefinedFields({ ...category, createdAt: now }));
+  } catch (e) {}
+
+  return safeId;
+}
+
+export async function updateCategory(id: string, category: Partial<Category>): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id,
+      name: category.name ? category.name.trim() : undefined,
+      slug: category.slug,
+      icon_name: category.iconName,
+      active: category.active,
+      order: category.order,
+      updated_at: new Date().toISOString()
+    });
+
+    const { error } = await supabase.from('categories').update(payload).eq('id', id);
+    if (error) {
+      console.error('[SUPABASE UPDATE CATEGORY ERROR]', error);
+      throw new Error(`Category update failed: ${error.message}`);
+    }
+  }
+
+  try {
+    const docRef = doc(db, 'categories', id);
+    const { id: _, ...rest } = category;
+    await updateDoc(docRef, removeUndefinedFields({ ...rest, updatedAt: new Date().toISOString() }));
+  } catch (e) {}
+}
+
+export async function deleteCategory(id: string): Promise<void> {
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase.from('categories').delete().eq('id', id);
+    if (error) {
+      console.error('[SUPABASE DELETE CATEGORY ERROR]', error);
+      throw new Error(`Category delete failed: ${error.message}`);
+    }
+  }
+
+  try {
+    await deleteDoc(doc(db, 'categories', id));
+  } catch (e) {}
+}
+
+// ================= APKS =================
 export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase client is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.');
@@ -311,7 +590,6 @@ export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> 
 
   const now = new Date().toISOString();
   
-  // Ensure ID is a valid UUID or generate a new valid UUID
   let safeId = apk.id;
   const isUuid = safeId && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(safeId);
   if (!isUuid) {
@@ -324,6 +602,7 @@ export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> 
 
   const title = (apk.name || (apk as any).title || 'Untitled App').trim();
   const category = (apk.category || 'General').trim();
+  const packageName = (apk.packageName || apk.package_name || '').trim();
   const iconUrl = apk.iconUrl || apk.icon || apk.icon_path || '';
   const apkUrl = apk.downloadUrl || apk.apk_file_path || apk.apkFilePath || '';
   const externalUrl = (apk.externalDownloadUrl || '').trim();
@@ -346,8 +625,10 @@ export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> 
     id: safeId,
     title: title,
     category: category,
+    category_id: apk.categoryId || '',
     version: apk.version || '1.0.0',
     android_requirement: apk.androidVersion || '7.0+',
+    package_name: packageName,
     file_size: apk.size || apk.apkFileSize || '45 MB',
     icon_url: iconUrl,
     apk_url: apkUrl,
@@ -356,6 +637,11 @@ export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> 
     mod_features: modFeaturesStr,
     changelog: apk.changelog || 'Initial release',
     screenshots: screenshots,
+    price: apk.price || 0,
+    currency: apk.currency || 'INR',
+    access_duration: apk.accessDuration || '30 Days',
+    start_date: apk.startDate || now,
+    expiry_date: apk.expiryDate || null,
     free_download: isFree,
     featured_vip: isFeatured,
     active_visible: isActive,
@@ -595,43 +881,135 @@ export async function deleteApk(id: string): Promise<void> {
 
 // ================= PLANS =================
 export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => void): Unsubscribe {
-  const q = query(
-    collection(db, 'plans'), 
-    where('apkId', '==', apkId)
-  );
-  return onSnapshot(q, (snap) => {
-    const list: PlanItem[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as PlanItem);
-    });
-    // Sort client side by price
-    list.sort((a, b) => a.price - b.price);
-    callback(list);
-  }, (err) => {
-    console.error('Subscribe plans error:', err);
-    callback([]);
-  });
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured() || !apkId) return;
+    try {
+      const { data, error } = await supabase
+        .from('plans')
+        .select('*')
+        .eq('apk_id', apkId)
+        .order('price', { ascending: true });
+
+      if (!error && data && isSubscribed) {
+        callback(data.map(mapRowToPlan));
+        return;
+      }
+    } catch (err) {}
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`plans_${apkId}_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plans' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
+  const q = query(collection(db, 'plans'), where('apkId', '==', apkId));
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: PlanItem[] = [];
+      snap.forEach(docSnap => list.push(mapRowToPlan({ id: docSnap.id, ...docSnap.data() })));
+      list.sort((a, b) => a.price - b.price);
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
 }
 
 export async function getPlansForApk(apkId: string): Promise<PlanItem[]> {
-  const q = query(collection(db, 'plans'), where('apkId', '==', apkId));
-  const snap = await getDocs(q);
-  const list: PlanItem[] = [];
-  snap.forEach((docSnap) => {
-    list.push({ id: docSnap.id, ...docSnap.data() } as PlanItem);
-  });
-  list.sort((a, b) => a.price - b.price);
-  return list;
+  if (isSupabaseConfigured() && apkId) {
+    try {
+      const { data, error } = await supabase
+        .from('plans')
+        .select('*')
+        .eq('apk_id', apkId)
+        .order('price', { ascending: true });
+
+      if (!error && data) {
+        return data.map(mapRowToPlan);
+      }
+    } catch (err) {}
+  }
+
+  try {
+    const q = query(collection(db, 'plans'), where('apkId', '==', apkId));
+    const snap = await getDocs(q);
+    const list: PlanItem[] = [];
+    snap.forEach(docSnap => list.push(mapRowToPlan({ id: docSnap.id, ...docSnap.data() })));
+    list.sort((a, b) => a.price - b.price);
+    return list;
+  } catch (e) {
+    return [];
+  }
 }
 
 export async function addPlan(plan: Omit<PlanItem, 'id'>): Promise<string> {
-  const docRef = await addDoc(collection(db, 'plans'), removeUndefinedFields(plan));
-  return docRef.id;
+  const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `plan_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safeId,
+      apk_id: plan.apkId,
+      name: plan.name.trim(),
+      duration_days: Number(plan.durationDays || 30),
+      price: Number(plan.price || 0),
+      active: plan.active !== false,
+      created_at: now,
+      updated_at: now
+    });
+
+    const { error } = await supabase.from('plans').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[SUPABASE ADD PLAN ERROR]', error);
+      throw new Error(`Plan add failed: ${error.message}`);
+    }
+  }
+
+  try {
+    await addDoc(collection(db, 'plans'), removeUndefinedFields(plan));
+  } catch (e) {}
+
+  return safeId;
 }
 
 export async function updatePlan(id: string, plan: Partial<PlanItem>): Promise<void> {
-  const { id: _, ...rest } = plan;
-  await updateDoc(doc(db, 'plans', id), removeUndefinedFields(rest));
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id,
+      apk_id: plan.apkId,
+      name: plan.name ? plan.name.trim() : undefined,
+      duration_days: plan.durationDays !== undefined ? Number(plan.durationDays) : undefined,
+      price: plan.price !== undefined ? Number(plan.price) : undefined,
+      active: plan.active,
+      updated_at: new Date().toISOString()
+    });
+
+    const { error } = await supabase.from('plans').update(payload).eq('id', id);
+    if (error) {
+      console.error('[SUPABASE UPDATE PLAN ERROR]', error);
+      throw new Error(`Plan update failed: ${error.message}`);
+    }
+  }
+
+  try {
+    const { id: _, ...rest } = plan;
+    await updateDoc(doc(db, 'plans', id), removeUndefinedFields(rest));
+  } catch (e) {}
 }
 
 export async function deletePlan(id: string): Promise<void> {
@@ -642,41 +1020,61 @@ export async function deletePlan(id: string): Promise<void> {
   const cleanId = id.trim();
 
   if (isSupabaseConfigured()) {
-    try {
-      const { error } = await supabase
-        .from('plans')
-        .delete()
-        .eq('id', cleanId);
-
-      if (error) {
-        console.warn('Supabase plan deletion note:', error.message || error);
-      }
-    } catch (sbErr) {
-      console.warn('Supabase delete plan exception:', sbErr);
+    const { error } = await supabase.from('plans').delete().eq('id', cleanId);
+    if (error) {
+      console.error('[SUPABASE DELETE PLAN ERROR]', error);
+      throw new Error(`Plan deletion failed: ${error.message}`);
     }
   }
 
   try {
     await deleteDoc(doc(db, 'plans', cleanId));
-  } catch (fsErr: any) {
-    console.error('Firestore delete plan error:', fsErr);
-    throw new Error(fsErr?.message || 'Failed to delete plan from database.');
-  }
+  } catch (e) {}
 }
 
 // ================= COUPONS =================
 export function subscribeCoupons(callback: (coupons: Coupon[]) => void): Unsubscribe {
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const { data, error } = await supabase.from('coupons').select('*').order('created_at', { ascending: false });
+      if (!error && data && isSubscribed) {
+        callback(data.map(mapRowToCoupon));
+        return;
+      }
+    } catch (err) {}
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`coupons_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
   const q = query(collection(db, 'coupons'), orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snap) => {
-    const list: Coupon[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as Coupon);
-    });
-    callback(list);
-  }, (err) => {
-    console.error('Subscribe coupons error:', err);
-    callback([]);
-  });
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: Coupon[] = [];
+      snap.forEach(docSnap => list.push(mapRowToCoupon({ id: docSnap.id, ...docSnap.data() })));
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
 }
 
 export async function validateCoupon(code: string, amount: number, userId?: string): Promise<{
@@ -690,270 +1088,523 @@ export async function validateCoupon(code: string, amount: number, userId?: stri
     return { valid: false, message: 'Please enter a coupon code' };
   }
 
-  const q = query(collection(db, 'coupons'), where('code', '==', cleanCode));
-  const snap = await getDocs(q);
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from('coupons')
+        .select('*')
+        .eq('code', cleanCode)
+        .maybeSingle();
 
-  if (snap.empty) {
-    return { valid: false, message: 'Invalid coupon code' };
+      if (!error && data) {
+        const coupon = mapRowToCoupon(data);
+        if (!coupon.active) return { valid: false, message: 'This coupon is no longer active' };
+
+        const now = new Date();
+        if (coupon.startDate && new Date(coupon.startDate) > now) {
+          return { valid: false, message: 'Coupon is not yet active' };
+        }
+        if (coupon.expiryDate && new Date(coupon.expiryDate) < now) {
+          return { valid: false, message: 'Coupon has expired' };
+        }
+        if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+          return { valid: false, message: 'Coupon maximum usage limit reached' };
+        }
+        if (coupon.minPurchase > 0 && amount < coupon.minPurchase) {
+          return { valid: false, message: `Minimum purchase amount for this coupon is ₹${coupon.minPurchase}` };
+        }
+
+        let rawDiscount = (amount * coupon.discountPercent) / 100;
+        if (coupon.maxDiscount > 0 && rawDiscount > coupon.maxDiscount) {
+          rawDiscount = coupon.maxDiscount;
+        }
+
+        const discountAmount = Math.min(amount, Math.round(rawDiscount));
+
+        return {
+          valid: true,
+          coupon,
+          discountAmount,
+          message: coupon.discountPercent === 100 
+            ? '100% OFF Coupon Applied! Free access unlocked.' 
+            : `${coupon.discountPercent}% OFF Applied!`
+        };
+      }
+    } catch (e) {}
   }
 
-  const couponDoc = snap.docs[0];
-  const coupon = { id: couponDoc.id, ...couponDoc.data() } as Coupon;
+  // Fallback check in Firestore
+  try {
+    const q = query(collection(db, 'coupons'), where('code', '==', cleanCode));
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const couponDoc = snap.docs[0];
+      const coupon = mapRowToCoupon({ id: couponDoc.id, ...couponDoc.data() });
+      if (!coupon.active) return { valid: false, message: 'This coupon is no longer active' };
 
-  if (!coupon.active) {
-    return { valid: false, message: 'This coupon is no longer active' };
-  }
-
-  const now = new Date();
-  if (coupon.startDate && new Date(coupon.startDate) > now) {
-    return { valid: false, message: 'Coupon is not yet active' };
-  }
-
-  if (coupon.expiryDate && new Date(coupon.expiryDate) < now) {
-    return { valid: false, message: 'Coupon has expired' };
-  }
-
-  if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
-    return { valid: false, message: 'Coupon maximum usage limit reached' };
-  }
-
-  if (coupon.minPurchase > 0 && amount < coupon.minPurchase) {
-    return { valid: false, message: `Minimum purchase amount for this coupon is ₹${coupon.minPurchase}` };
-  }
-
-  // Per user limit check
-  if (userId && coupon.perUserLimit > 0) {
-    const userOrdersQ = query(
-      collection(db, 'orders'),
-      where('userId', '==', userId),
-      where('couponCode', '==', cleanCode),
-      where('status', 'in', ['APPROVED', 'COUPON_FREE'])
-    );
-    const userOrdersSnap = await getDocs(userOrdersQ);
-    if (userOrdersSnap.size >= coupon.perUserLimit) {
-      return { valid: false, message: 'You have reached the usage limit for this coupon' };
+      let rawDiscount = (amount * coupon.discountPercent) / 100;
+      if (coupon.maxDiscount > 0 && rawDiscount > coupon.maxDiscount) {
+        rawDiscount = coupon.maxDiscount;
+      }
+      const discountAmount = Math.min(amount, Math.round(rawDiscount));
+      return {
+        valid: true,
+        coupon,
+        discountAmount,
+        message: coupon.discountPercent === 100 ? '100% OFF Coupon Applied!' : `${coupon.discountPercent}% OFF Applied!`
+      };
     }
-  }
+  } catch (e) {}
 
-  // Calculate discount
-  let rawDiscount = (amount * coupon.discountPercent) / 100;
-  if (coupon.maxDiscount > 0 && rawDiscount > coupon.maxDiscount) {
-    rawDiscount = coupon.maxDiscount;
-  }
-
-  const discountAmount = Math.min(amount, Math.round(rawDiscount));
-
-  return {
-    valid: true,
-    coupon,
-    discountAmount,
-    message: coupon.discountPercent === 100 
-      ? '100% OFF Coupon Applied! Free access unlocked.' 
-      : `${coupon.discountPercent}% OFF Applied!`
-  };
+  return { valid: false, message: 'Invalid coupon code' };
 }
 
 export async function addCoupon(coupon: Omit<Coupon, 'id' | 'usedCount' | 'createdAt'>): Promise<string> {
-  const docRef = await addDoc(collection(db, 'coupons'), removeUndefinedFields({
-    ...coupon,
-    code: coupon.code.toUpperCase().trim(),
-    usedCount: 0,
-    createdAt: new Date().toISOString()
-  }));
-  return docRef.id;
+  const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `coupon_${Date.now()}`;
+  const now = new Date().toISOString();
+
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safeId,
+      code: coupon.code.toUpperCase().trim(),
+      discount_percent: coupon.discountPercent,
+      min_purchase: coupon.minPurchase,
+      max_discount: coupon.maxDiscount,
+      start_date: coupon.startDate,
+      expiry_date: coupon.expiryDate,
+      usage_limit: coupon.usageLimit,
+      used_count: 0,
+      per_user_limit: coupon.perUserLimit || 1,
+      active: coupon.active !== false,
+      created_at: now,
+      updated_at: now
+    });
+
+    const { error } = await supabase.from('coupons').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[SUPABASE ADD COUPON ERROR]', error);
+      throw new Error(`Coupon add failed: ${error.message}`);
+    }
+  }
+
+  try {
+    await addDoc(collection(db, 'coupons'), removeUndefinedFields({
+      ...coupon,
+      code: coupon.code.toUpperCase().trim(),
+      usedCount: 0,
+      createdAt: now
+    }));
+  } catch (e) {}
+
+  return safeId;
 }
 
 export async function updateCoupon(id: string, coupon: Partial<Coupon>): Promise<void> {
-  const { id: _, ...rest } = coupon;
-  const data: any = { ...rest };
-  if (data.code) {
-    data.code = data.code.toUpperCase().trim();
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id,
+      code: coupon.code ? coupon.code.toUpperCase().trim() : undefined,
+      discount_percent: coupon.discountPercent,
+      min_purchase: coupon.minPurchase,
+      max_discount: coupon.maxDiscount,
+      start_date: coupon.startDate,
+      expiry_date: coupon.expiryDate,
+      usage_limit: coupon.usageLimit,
+      used_count: coupon.usedCount,
+      per_user_limit: coupon.perUserLimit,
+      active: coupon.active,
+      updated_at: new Date().toISOString()
+    });
+
+    const { error } = await supabase.from('coupons').update(payload).eq('id', id);
+    if (error) {
+      console.error('[SUPABASE UPDATE COUPON ERROR]', error);
+      throw new Error(`Coupon update failed: ${error.message}`);
+    }
   }
-  await updateDoc(doc(db, 'coupons', id), removeUndefinedFields(data));
+
+  try {
+    const { id: _, ...rest } = coupon;
+    const data: any = { ...rest };
+    if (data.code) data.code = data.code.toUpperCase().trim();
+    await updateDoc(doc(db, 'coupons', id), removeUndefinedFields(data));
+  } catch (e) {}
 }
 
 export async function deleteCoupon(id: string): Promise<void> {
-  await deleteDoc(doc(db, 'coupons', id));
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase.from('coupons').delete().eq('id', id);
+    if (error) {
+      console.error('[SUPABASE DELETE COUPON ERROR]', error);
+      throw new Error(`Coupon deletion failed: ${error.message}`);
+    }
+  }
+
+  try {
+    await deleteDoc(doc(db, 'coupons', id));
+  } catch (e) {}
 }
 
 // ================= ORDERS & PURCHASES =================
 export async function createOrder(orderData: Omit<Order, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<{ orderId: string; status: OrderStatus; purchaseId?: string }> {
   const now = new Date().toISOString();
-  let status: OrderStatus = 'PENDING';
+  const safeOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `order_${Date.now()}`;
+  let status: OrderStatus = orderData.finalPrice <= 0 ? 'COUPON_FREE' : 'PENDING';
 
-  // Check if final price is 0 (100% discount or free)
-  if (orderData.finalPrice <= 0) {
-    status = 'COUPON_FREE';
-  }
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safeOrderId,
+      user_id: orderData.userId,
+      user_email: orderData.userEmail,
+      user_name: orderData.userName,
+      apk_id: orderData.apkId,
+      apk_name: orderData.apkName,
+      apk_icon: orderData.apkIcon,
+      plan_id: orderData.planId,
+      plan_name: orderData.planName,
+      duration_days: orderData.durationDays,
+      original_price: orderData.originalPrice,
+      coupon_code: orderData.couponCode,
+      discount_percent: orderData.discountPercent,
+      discount_amount: orderData.discountAmount,
+      final_price: orderData.finalPrice,
+      upi_id: orderData.upiId,
+      utr: orderData.utr,
+      screenshot_url: orderData.screenshotUrl,
+      screenshot_path: orderData.screenshot_path,
+      status: status,
+      created_at: now,
+      updated_at: now
+    });
 
-  const newOrderDoc = await addDoc(collection(db, 'orders'), removeUndefinedFields({
-    ...orderData,
-    status,
-    createdAt: now,
-    updatedAt: now
-  }));
-
-  const orderId = newOrderDoc.id;
-
-  // Increment coupon usage count if used
-  if (orderData.couponCode) {
-    const q = query(collection(db, 'coupons'), where('code', '==', orderData.couponCode.toUpperCase().trim()));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const cDoc = snap.docs[0];
-      const currentCount = cDoc.data().usedCount || 0;
-      await updateDoc(doc(db, 'coupons', cDoc.id), {
-        usedCount: currentCount + 1
-      });
+    const { error } = await supabase.from('orders').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[SUPABASE CREATE ORDER ERROR]', error);
+      throw new Error(`Order creation failed: ${error.message}`);
     }
   }
 
-  // If status is COUPON_FREE, automatically create active Purchase entitlement right away!
+  try {
+    await setDoc(doc(db, 'orders', safeOrderId), removeUndefinedFields({ ...orderData, status, createdAt: now, updatedAt: now }));
+  } catch (e) {}
+
   if (status === 'COUPON_FREE') {
     const purchaseId = await createPurchaseFromOrder({
-      id: orderId,
+      id: safeOrderId,
       ...orderData,
       status,
       createdAt: now,
       updatedAt: now
     });
-    return { orderId, status, purchaseId };
+    return { orderId: safeOrderId, status, purchaseId };
   }
 
-  return { orderId, status };
+  return { orderId: safeOrderId, status };
 }
 
 export async function submitPaymentProof(orderId: string, utr: string, screenshotUrl: string, storagePath?: string): Promise<void> {
-  const orderRef = doc(db, 'orders', orderId);
-  await updateDoc(orderRef, removeUndefinedFields({
-    utr: utr.trim(),
-    screenshotUrl: screenshotUrl.trim(),
-    screenshot_path: storagePath || screenshotUrl.trim(),
-    status: 'PENDING',
-    updatedAt: new Date().toISOString()
-  }));
+  const now = new Date().toISOString();
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase.from('orders').update({
+      utr: utr.trim(),
+      screenshot_url: screenshotUrl.trim(),
+      screenshot_path: storagePath || screenshotUrl.trim(),
+      status: 'PENDING',
+      updated_at: now
+    }).eq('id', orderId);
+
+    if (error) {
+      console.error('[SUPABASE SUBMIT PROOF ERROR]', error);
+      throw new Error(`Payment proof submission failed: ${error.message}`);
+    }
+  }
+
+  try {
+    const orderRef = doc(db, 'orders', orderId);
+    await updateDoc(orderRef, removeUndefinedFields({
+      utr: utr.trim(),
+      screenshotUrl: screenshotUrl.trim(),
+      screenshot_path: storagePath || screenshotUrl.trim(),
+      status: 'PENDING',
+      updatedAt: now
+    }));
+  } catch (e) {}
 }
 
 export function subscribeUserOrders(userId: string, callback: (orders: Order[]) => void): Unsubscribe {
-  const q = query(
-    collection(db, 'orders'),
-    where('userId', '==', userId)
-  );
-  return onSnapshot(q, (snap) => {
-    const list: Order[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as Order);
-    });
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
-  }, (err) => {
-    console.error('User orders error:', err);
-    callback([]);
-  });
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured() || !userId) return;
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (!error && data && isSubscribed) {
+        callback(data.map(mapRowToOrder));
+        return;
+      }
+    } catch (err) {}
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`orders_user_${userId}_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
+  const q = query(collection(db, 'orders'), where('userId', '==', userId));
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: Order[] = [];
+      snap.forEach(docSnap => list.push(mapRowToOrder({ id: docSnap.id, ...docSnap.data() })));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
 }
 
 export function subscribeAllOrders(callback: (orders: Order[]) => void): Unsubscribe {
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && data && isSubscribed) {
+        callback(data.map(mapRowToOrder));
+        return;
+      }
+    } catch (err) {}
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`orders_all_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
   const q = query(collection(db, 'orders'));
-  return onSnapshot(q, (snap) => {
-    const list: Order[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as Order);
-    });
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
-  }, (err) => {
-    console.error('All orders error:', err);
-    callback([]);
-  });
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: Order[] = [];
+      snap.forEach(docSnap => list.push(mapRowToOrder({ id: docSnap.id, ...docSnap.data() })));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
 }
 
 export async function approveOrder(orderId: string): Promise<string> {
-  const orderRef = doc(db, 'orders', orderId);
-  const orderSnap = await getDoc(orderRef);
-  if (!orderSnap.exists()) {
-    throw new Error('Order not found');
-  }
-
-  const order = { id: orderSnap.id, ...orderSnap.data() } as Order;
   const now = new Date().toISOString();
 
-  await updateDoc(orderRef, {
-    status: 'APPROVED',
-    updatedAt: now
-  });
+  if (isSupabaseConfigured()) {
+    const { data: orderData, error: fetchErr } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+    if (fetchErr || !orderData) throw new Error('Order not found in database');
 
-  // Create active purchase entitlement
+    const { error: updateErr } = await supabase.from('orders').update({
+      status: 'APPROVED',
+      updated_at: now
+    }).eq('id', orderId);
+
+    if (updateErr) throw new Error(`Approve order failed: ${updateErr.message}`);
+
+    const order = mapRowToOrder(orderData);
+    return await createPurchaseFromOrder(order);
+  }
+
+  const orderRef = doc(db, 'orders', orderId);
+  const orderSnap = await getDoc(orderRef);
+  if (!orderSnap.exists()) throw new Error('Order not found');
+  const order = mapRowToOrder({ id: orderSnap.id, ...orderSnap.data() });
+  await updateDoc(orderRef, { status: 'APPROVED', updatedAt: now });
   return await createPurchaseFromOrder(order);
 }
 
 export async function rejectOrder(orderId: string, reason: string): Promise<void> {
-  const orderRef = doc(db, 'orders', orderId);
-  await updateDoc(orderRef, {
-    status: 'REJECTED',
-    rejectionReason: reason || 'Payment could not be verified.',
-    updatedAt: new Date().toISOString()
-  });
+  const now = new Date().toISOString();
+  if (isSupabaseConfigured()) {
+    const { error } = await supabase.from('orders').update({
+      status: 'REJECTED',
+      rejection_reason: reason || 'Payment could not be verified.',
+      updated_at: now
+    }).eq('id', orderId);
+
+    if (error) throw new Error(`Reject order failed: ${error.message}`);
+  }
+
+  try {
+    const orderRef = doc(db, 'orders', orderId);
+    await updateDoc(orderRef, {
+      status: 'REJECTED',
+      rejectionReason: reason || 'Payment could not be verified.',
+      updatedAt: now
+    });
+  } catch (e) {}
 }
 
-async function createPurchaseFromOrder(order: Order): Promise<string> {
+export async function createPurchaseFromOrder(order: Order): Promise<string> {
   const now = new Date();
   const startDate = now.toISOString();
-  
-  // Expiry date calculation based on durationDays
   const expiryTime = now.getTime() + (order.durationDays * 24 * 60 * 60 * 1000);
   const expiryDate = new Date(expiryTime).toISOString();
+  const safePurchaseId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pur_${Date.now()}`;
 
-  // Get current APK download URL
-  const apkSnap = await getDoc(doc(db, 'apks', order.apkId));
-  const apkData = apkSnap.exists() ? apkSnap.data() as ApkItem : null;
+  let apkDownloadUrl = '';
+  if (isSupabaseConfigured() && order.apkId) {
+    const { data: apkRow } = await supabase.from('apks').select('*').eq('id', order.apkId).maybeSingle();
+    if (apkRow) {
+      const mapped = mapRowToApkItem(apkRow);
+      apkDownloadUrl = mapped.downloadUrl || mapped.externalDownloadUrl || '';
+    }
+  }
 
-  const purchaseData: Omit<Purchase, 'id'> = {
-    orderId: order.id,
-    userId: order.userId,
-    userEmail: order.userEmail,
-    apkId: order.apkId,
-    apkName: order.apkName,
-    apkIcon: order.apkIcon || (apkData ? apkData.icon : ''),
-    planName: order.planName,
-    durationDays: order.durationDays,
-    startDate,
-    expiryDate,
-    status: 'ACTIVE',
-    downloadUrl: apkData?.downloadUrl || '',
-    createdAt: startDate
-  };
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safePurchaseId,
+      order_id: order.id,
+      user_id: order.userId,
+      user_email: order.userEmail,
+      apk_id: order.apkId,
+      apk_name: order.apkName,
+      apk_icon: order.apkIcon,
+      plan_name: order.planName,
+      duration_days: order.durationDays,
+      start_date: startDate,
+      expiry_date: expiryDate,
+      status: 'ACTIVE',
+      download_url: apkDownloadUrl,
+      created_at: startDate,
+      updated_at: startDate
+    });
 
-  const docRef = await addDoc(collection(db, 'purchases'), removeUndefinedFields(purchaseData));
-  return docRef.id;
+    const { error } = await supabase.from('purchases').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      console.error('[SUPABASE CREATE PURCHASE ERROR]', error);
+      throw new Error(`Purchase creation failed: ${error.message}`);
+    }
+  }
+
+  try {
+    const purchaseData: Omit<Purchase, 'id'> = {
+      orderId: order.id,
+      userId: order.userId,
+      userEmail: order.userEmail,
+      apkId: order.apkId,
+      apkName: order.apkName,
+      apkIcon: order.apkIcon,
+      planName: order.planName,
+      durationDays: order.durationDays,
+      startDate,
+      expiryDate,
+      status: 'ACTIVE',
+      downloadUrl: apkDownloadUrl,
+      createdAt: startDate
+    };
+    await setDoc(doc(db, 'purchases', safePurchaseId), removeUndefinedFields(purchaseData));
+  } catch (e) {}
+
+  return safePurchaseId;
 }
 
 export function subscribeUserPurchases(userId: string, callback: (purchases: Purchase[]) => void): Unsubscribe {
-  const q = query(
-    collection(db, 'purchases'),
-    where('userId', '==', userId)
-  );
+  let isSubscribed = true;
 
-  return onSnapshot(q, async (snap) => {
-    const list: Purchase[] = [];
-    const now = new Date();
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured() || !userId) return;
+    try {
+      const { data, error } = await supabase
+        .from('purchases')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
 
-    for (const docSnap of snap.docs) {
-      const data = { id: docSnap.id, ...docSnap.data() } as Purchase;
-      
-      // Auto-update expired purchases if date passed
-      if (data.status === 'ACTIVE' && new Date(data.expiryDate) < now) {
-        data.status = 'EXPIRED';
-        updateDoc(doc(db, 'purchases', data.id), { status: 'EXPIRED' }).catch(console.error);
+      if (!error && data && isSubscribed) {
+        const mapped = data.map(mapRowToPurchase);
+        const now = new Date();
+        for (const p of mapped) {
+          if (p.status === 'ACTIVE' && new Date(p.expiryDate) < now) {
+            p.status = 'EXPIRED';
+            supabase.from('purchases').update({ status: 'EXPIRED' }).eq('id', p.id).then();
+          }
+        }
+        callback(mapped);
+        return;
       }
-      list.push(data);
-    }
+    } catch (err) {}
+  };
 
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
-  }, (err) => {
-    console.error('Subscribe purchases error:', err);
-    callback([]);
-  });
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`purchases_user_${userId}_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
+  const q = query(collection(db, 'purchases'), where('userId', '==', userId));
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: Purchase[] = [];
+      const now = new Date();
+      snap.forEach((docSnap) => {
+        const p = mapRowToPurchase({ id: docSnap.id, ...docSnap.data() });
+        if (p.status === 'ACTIVE' && new Date(p.expiryDate) < now) {
+          p.status = 'EXPIRED';
+        }
+        list.push(p);
+      });
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
 }
 
 export async function checkApkAccess(userId: string | undefined, apkId: string): Promise<{
@@ -961,41 +1612,61 @@ export async function checkApkAccess(userId: string | undefined, apkId: string):
   purchase?: Purchase;
   isFree?: boolean;
 }> {
-  // First check if APK itself is free
-  const apkSnap = await getDoc(doc(db, 'apks', apkId));
-  if (apkSnap.exists() && apkSnap.data().isFree) {
-    return { hasAccess: true, isFree: true };
-  }
+  if (isSupabaseConfigured() && apkId) {
+    const { data: apkRow } = await supabase.from('apks').select('*').eq('id', apkId).maybeSingle();
+    if (apkRow) {
+      const mapped = mapRowToApkItem(apkRow);
+      if (mapped.isFree) return { hasAccess: true, isFree: true };
+    }
 
-  if (!userId) {
-    return { hasAccess: false };
-  }
+    if (userId) {
+      const { data: purchases } = await supabase
+        .from('purchases')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('apk_id', apkId)
+        .eq('status', 'ACTIVE');
 
-  // Check active purchases
-  const q = query(
-    collection(db, 'purchases'),
-    where('userId', '==', userId),
-    where('apkId', '==', apkId),
-    where('status', '==', 'ACTIVE')
-  );
-
-  const snap = await getDocs(q);
-  const now = new Date();
-
-  for (const docSnap of snap.docs) {
-    const p = { id: docSnap.id, ...docSnap.data() } as Purchase;
-    if (new Date(p.expiryDate) > now) {
-      return { hasAccess: true, purchase: p };
-    } else {
-      // mark expired
-      updateDoc(doc(db, 'purchases', p.id), { status: 'EXPIRED' }).catch(console.error);
+      if (purchases && purchases.length > 0) {
+        const now = new Date();
+        for (const row of purchases) {
+          const p = mapRowToPurchase(row);
+          if (new Date(p.expiryDate) > now) {
+            return { hasAccess: true, purchase: p };
+          }
+        }
+      }
     }
   }
+
+  // Fallback check in Firestore
+  try {
+    const apkSnap = await getDoc(doc(db, 'apks', apkId));
+    if (apkSnap.exists() && apkSnap.data().isFree) {
+      return { hasAccess: true, isFree: true };
+    }
+    if (userId) {
+      const q = query(
+        collection(db, 'purchases'),
+        where('userId', '==', userId),
+        where('apkId', '==', apkId),
+        where('status', '==', 'ACTIVE')
+      );
+      const snap = await getDocs(q);
+      const now = new Date();
+      for (const docSnap of snap.docs) {
+        const p = mapRowToPurchase({ id: docSnap.id, ...docSnap.data() });
+        if (new Date(p.expiryDate) > now) {
+          return { hasAccess: true, purchase: p };
+        }
+      }
+    }
+  } catch (e) {}
 
   return { hasAccess: false };
 }
 
-// ================= ADMIN STATS & USERS =================
+// ================= ADMIN USERS =================
 export function subscribeUsers(callback: (users: UserProfile[]) => void): Unsubscribe {
   const q = query(collection(db, 'users'));
   return onSnapshot(q, (snap) => {
@@ -1012,39 +1683,71 @@ export function subscribeUsers(callback: (users: UserProfile[]) => void): Unsubs
 
 // ================= REVIEWS & RATINGS =================
 export function subscribeApkReviews(apkId: string, callback: (reviews: ReviewItem[]) => void): Unsubscribe {
+  let isSubscribed = true;
+
+  const loadFromSupabase = async () => {
+    if (!isSupabaseConfigured() || !apkId) return;
+    try {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('apk_id', apkId)
+        .order('created_at', { ascending: false });
+
+      if (!error && data && isSubscribed) {
+        callback(data.map(mapRowToReview));
+        return;
+      }
+    } catch (err) {}
+  };
+
+  loadFromSupabase();
+
+  let supabaseChannel: any = null;
+  if (isSupabaseConfigured()) {
+    try {
+      supabaseChannel = supabase
+        .channel(`reviews_${apkId}_${Math.random().toString(36).substring(2, 7)}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reviews' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
+  }
+
   const q = query(collection(db, 'reviews'), where('apkId', '==', apkId));
-  return onSnapshot(q, (snap) => {
-    const list: ReviewItem[] = [];
-    snap.forEach((docSnap) => {
-      list.push({ id: docSnap.id, ...docSnap.data() } as ReviewItem);
-    });
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    callback(list);
-  }, (err) => {
-    console.error('Subscribe reviews error:', err);
-    callback([]);
-  });
+  const fsUnsub = onSnapshot(q, (snap) => {
+    if (isSubscribed && snap.docs.length > 0) {
+      const list: ReviewItem[] = [];
+      snap.forEach(docSnap => list.push(mapRowToReview({ id: docSnap.id, ...docSnap.data() })));
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(list);
+    }
+  }, () => {});
+
+  return () => {
+    isSubscribed = false;
+    if (supabaseChannel) try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+    if (fsUnsub) fsUnsub();
+  };
 }
 
 export async function recalculateApkRating(apkId: string): Promise<void> {
+  if (!isSupabaseConfigured() || !apkId) return;
   try {
-    const q = query(collection(db, 'reviews'), where('apkId', '==', apkId));
-    const snap = await getDocs(q);
-    let totalStars = 0;
-    const count = snap.size;
-    snap.forEach((docSnap) => {
-      const data = docSnap.data();
-      totalStars += (data.rating || 5);
-    });
-    const avgRating = count > 0 ? Number((totalStars / count).toFixed(1)) : 4.8;
-    await updateDoc(doc(db, 'apks', apkId), {
+    const { data: reviews } = await supabase.from('reviews').select('rating').eq('apk_id', apkId);
+    let total = 0;
+    const count = reviews ? reviews.length : 0;
+    if (reviews) {
+      reviews.forEach(r => { total += Number(r.rating || 5); });
+    }
+    const avgRating = count > 0 ? Number((total / count).toFixed(1)) : 4.8;
+    await supabase.from('apks').update({
       rating: avgRating,
-      reviewsCount: count,
-      updatedAt: new Date().toISOString()
-    });
-  } catch (err) {
-    console.warn('Could not recalculate APK rating:', err);
-  }
+      reviews_count: count,
+      updated_at: new Date().toISOString()
+    }).eq('id', apkId);
+  } catch (err) {}
 }
 
 export async function addOrUpdateReview(reviewData: {
@@ -1056,54 +1759,33 @@ export async function addOrUpdateReview(reviewData: {
   rating: number;
   comment: string;
 }): Promise<string> {
+  const safeId = reviewData.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `rev_${Date.now()}`);
   const now = new Date().toISOString();
-  let reviewId = reviewData.id;
 
-  // Check if user already submitted a review for this APK if no id provided
-  if (!reviewId) {
-    const q = query(
-      collection(db, 'reviews'),
-      where('apkId', '==', reviewData.apkId),
-      where('userId', '==', reviewData.userId)
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      reviewId = snap.docs[0].id;
-    }
-  }
-
-  if (reviewId) {
-    const docRef = doc(db, 'reviews', reviewId);
-    await updateDoc(docRef, removeUndefinedFields({
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safeId,
+      apk_id: reviewData.apkId,
+      user_id: reviewData.userId,
+      user_name: reviewData.userName,
+      user_photo_url: reviewData.userPhotoURL || '',
       rating: reviewData.rating,
       comment: reviewData.comment.trim(),
-      userName: reviewData.userName,
-      userPhotoURL: reviewData.userPhotoURL || '',
-      updatedAt: now
-    }));
-  } else {
-    const docRef = await addDoc(collection(db, 'reviews'), removeUndefinedFields({
-      apkId: reviewData.apkId,
-      userId: reviewData.userId,
-      userName: reviewData.userName,
-      userPhotoURL: reviewData.userPhotoURL || '',
-      rating: reviewData.rating,
-      comment: reviewData.comment.trim(),
-      createdAt: now,
-      updatedAt: now
-    }));
-    reviewId = docRef.id;
+      created_at: now,
+      updated_at: now
+    });
+
+    const { error } = await supabase.from('reviews').upsert(payload, { onConflict: 'id' });
+    if (error) throw new Error(`Review submission failed: ${error.message}`);
+    await recalculateApkRating(reviewData.apkId);
   }
 
-  // Recalculate average rating & reviews count on APK doc
-  await recalculateApkRating(reviewData.apkId);
-
-  return reviewId;
+  return safeId;
 }
 
 export async function deleteReview(reviewId: string, apkId: string): Promise<void> {
-  const docRef = doc(db, 'reviews', reviewId);
-  await deleteDoc(docRef);
-  await recalculateApkRating(apkId);
+  if (isSupabaseConfigured()) {
+    await supabase.from('reviews').delete().eq('id', reviewId);
+    await recalculateApkRating(apkId);
+  }
 }
-

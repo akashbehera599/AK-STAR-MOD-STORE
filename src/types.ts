@@ -23,6 +23,8 @@ export interface ApkItem {
   id: string;
   name: string; // Title
   slug: string;
+  packageName?: string;
+  package_name?: string;
   description: string;
   shortDescription?: string;
   category: string; // categoryName
@@ -46,6 +48,12 @@ export interface ApkItem {
   apkFileSize?: string;
   externalDownloadUrl?: string;
   downloadUrl?: string; // Unified download link for customers
+
+  price?: number;
+  currency?: string;
+  accessDuration?: string;
+  startDate?: string;
+  expiryDate?: string;
 
   isFree: boolean;
   isPremium: boolean;

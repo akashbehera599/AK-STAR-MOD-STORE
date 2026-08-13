@@ -43,6 +43,8 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
   const [formData, setFormData] = useState<Partial<ApkItem>>({
     id: targetApkId,
     name: editingApk?.name || '',
+    packageName: editingApk?.packageName || editingApk?.package_name || '',
+    package_name: editingApk?.package_name || editingApk?.packageName || '',
     shortDescription: editingApk?.shortDescription || '',
     description: editingApk?.description || '',
     category: editingApk?.category || (categories[0]?.name || 'Games'),
@@ -576,6 +578,8 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
         category: finalCategoryName,
         categoryName: finalCategoryName,
         categoryId: selectedCatObj?.id || formData.categoryId || '',
+        packageName: formData.packageName || formData.package_name || '',
+        package_name: formData.packageName || formData.package_name || '',
         version: formData.version || '1.0.0',
         androidVersion: formData.androidVersion || '7.0+',
         icon: finalIcon,
@@ -722,8 +726,19 @@ export const AdminApkModal: React.FC<AdminApkModalProps> = ({
             </div>
           </div>
 
-          {/* 2. Version, Android Requirement, Size */}
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          {/* 2. Package Name, Version, Android Requirement, Size */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            <div>
+              <label className="text-zinc-400 font-medium block mb-1">Package Name</label>
+              <input
+                type="text"
+                placeholder="com.example.app"
+                value={formData.packageName || formData.package_name || ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, packageName: e.target.value, package_name: e.target.value }))}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white outline-none"
+              />
+            </div>
+
             <div>
               <label className="text-zinc-400 font-medium block mb-1">Version</label>
               <input

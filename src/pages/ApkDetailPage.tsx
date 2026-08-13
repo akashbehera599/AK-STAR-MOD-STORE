@@ -179,7 +179,7 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
             </p>
 
             {/* Quick Stats Grid */}
-            <div className="grid grid-cols-3 gap-2 pt-2 text-center max-w-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-center max-w-md">
               <div className="bg-zinc-950/60 p-2 rounded-xl border border-zinc-800/80">
                 <p className="text-[10px] text-zinc-500 uppercase font-semibold">Rating</p>
                 <p className="text-xs font-bold text-amber-400 flex items-center justify-center gap-1 mt-0.5">
@@ -193,6 +193,12 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
               <div className="bg-zinc-950/60 p-2 rounded-xl border border-zinc-800/80">
                 <p className="text-[10px] text-zinc-500 uppercase font-semibold">Version</p>
                 <p className="text-xs font-bold text-zinc-200 mt-0.5">v{apk.version}</p>
+              </div>
+              <div className="bg-zinc-950/60 p-2 rounded-xl border border-zinc-800/80 overflow-hidden">
+                <p className="text-[10px] text-zinc-500 uppercase font-semibold">Package</p>
+                <p className="text-xs font-bold text-zinc-200 mt-0.5 truncate" title={apk.packageName || apk.package_name || 'com.akstar.mod'}>
+                  {apk.packageName || apk.package_name || 'com.akstar.mod'}
+                </p>
               </div>
             </div>
           </div>
