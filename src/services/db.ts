@@ -406,32 +406,93 @@ export async function fetchApksFromSupabase(includeInactive = false): Promise<Ap
 
 export function subscribeApks(callback: (apks: ApkItem[]) => void, includeInactive = false): Unsubscribe {
   let isSubscribed = true;
+  let currentApks: ApkItem[] = [];
+
+  const updateAndEmit = (newList: ApkItem[]) => {
+    currentApks = newList;
+    if (isSubscribed) {
+      callback(currentApks);
+    }
+  };
 
   const loadFromSupabase = async () => {
     if (!isSupabaseConfigured()) return;
     try {
       const sbApks = await fetchApksFromSupabase(includeInactive);
       if (isSubscribed) {
-        callback(sbApks);
+        updateAndEmit(sbApks);
       }
     } catch (err) {
       console.warn('[SUPABASE LOAD WARNING]', err);
     }
   };
 
-  // 1. Initial Supabase Fetch
+  // 1. Initial Load
   loadFromSupabase();
 
   // 2. Realtime Subscription to Supabase apks table
   let supabaseChannel: any = null;
   if (isSupabaseConfigured()) {
     try {
+      const channelName = `ak-star-mod-store-apks-${includeInactive ? 'admin' : 'user'}-${Math.random().toString(36).substring(2, 7)}`;
       supabaseChannel = supabase
-        .channel('public_apks_changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'apks' }, () => {
-          loadFromSupabase();
-        })
-        .subscribe();
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'apks'
+          },
+          (payload: any) => {
+            console.log('APK database change:', payload);
+
+            if (payload.eventType === 'INSERT') {
+              const newItem = mapRowToApkItem(payload.new);
+              if (includeInactive || newItem.isActive) {
+                const index = currentApks.findIndex(a => a.id === newItem.id);
+                if (index >= 0) {
+                  const updated = [...currentApks];
+                  updated[index] = newItem;
+                  updateAndEmit(updated);
+                } else {
+                  updateAndEmit([newItem, ...currentApks]);
+                }
+              }
+            } else if (payload.eventType === 'UPDATE') {
+              const updatedItem = mapRowToApkItem(payload.new);
+              const index = currentApks.findIndex(a => a.id === updatedItem.id);
+              if (includeInactive || updatedItem.isActive) {
+                if (index >= 0) {
+                  const updated = [...currentApks];
+                  updated[index] = updatedItem;
+                  updateAndEmit(updated);
+                } else {
+                  updateAndEmit([updatedItem, ...currentApks]);
+                }
+              } else {
+                if (index >= 0) {
+                  updateAndEmit(currentApks.filter(a => a.id !== updatedItem.id));
+                }
+              }
+            } else if (payload.eventType === 'DELETE') {
+              const deletedId = String(payload.old?.id || payload.new?.id || '');
+              if (deletedId) {
+                updateAndEmit(currentApks.filter(a => a.id !== deletedId));
+              }
+            }
+
+            // Sync with backend
+            loadFromSupabase();
+          }
+        )
+        .subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Realtime status: SUBSCRIBED');
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.warn(`Realtime status: ${status}, keeping current store data visible`);
+          }
+        });
     } catch (e) {
       console.warn('[SUPABASE REALTIME WARNING]', e);
     }
@@ -447,7 +508,7 @@ export function subscribeApks(callback: (apks: ApkItem[]) => void, includeInacti
       snap.forEach((docSnap) => {
         list.push(mapRowToApkItem({ id: docSnap.id, ...docSnap.data() }));
       });
-      callback(list);
+      updateAndEmit(list);
     }
   }, (err) => {
     console.warn('Firestore fallback note:', err);
@@ -456,7 +517,9 @@ export function subscribeApks(callback: (apks: ApkItem[]) => void, includeInacti
   return () => {
     isSubscribed = false;
     if (supabaseChannel) {
-      try { supabase.removeChannel(supabaseChannel); } catch (e) {}
+      try {
+        supabase.removeChannel(supabaseChannel);
+      } catch (e) {}
     }
     if (fsUnsub) {
       fsUnsub();
