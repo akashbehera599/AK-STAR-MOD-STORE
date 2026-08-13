@@ -515,6 +515,12 @@ export function subscribeCategories(callback: (categories: Category[]) => void):
 export async function addCategory(category: Omit<Category, 'id'>): Promise<string> {
   const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cat_${Date.now()}`;
   const now = new Date().toISOString();
+  let fsSuccess = false;
+
+  try {
+    await setDoc(doc(db, 'categories', safeId), removeUndefinedFields({ ...category, id: safeId, createdAt: now }));
+    fsSuccess = true;
+  } catch (e) {}
 
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
@@ -528,21 +534,31 @@ export async function addCategory(category: Omit<Category, 'id'>): Promise<strin
       updated_at: now
     });
 
-    const { error } = await supabase.from('categories').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.error('[SUPABASE ADD CATEGORY ERROR]', error);
-      throw new Error(`Category add failed: ${error.message}`);
+    try {
+      const { error } = await supabase.from('categories').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.warn('[SUPABASE ADD CATEGORY NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Category add failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Category add failed');
     }
   }
-
-  try {
-    await addDoc(collection(db, 'categories'), removeUndefinedFields({ ...category, createdAt: now }));
-  } catch (e) {}
 
   return safeId;
 }
 
 export async function updateCategory(id: string, category: Partial<Category>): Promise<void> {
+  const now = new Date().toISOString();
+  let fsSuccess = false;
+
+  try {
+    const docRef = doc(db, 'categories', id);
+    const { id: _, ...rest } = category;
+    await setDoc(docRef, removeUndefinedFields({ ...rest, updatedAt: now }), { merge: true });
+    fsSuccess = true;
+  } catch (e) {}
+
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
       id,
@@ -551,43 +567,43 @@ export async function updateCategory(id: string, category: Partial<Category>): P
       icon_name: category.iconName,
       active: category.active,
       order: category.order,
-      updated_at: new Date().toISOString()
+      updated_at: now
     });
 
-    const { error } = await supabase.from('categories').update(payload).eq('id', id);
-    if (error) {
-      console.error('[SUPABASE UPDATE CATEGORY ERROR]', error);
-      throw new Error(`Category update failed: ${error.message}`);
+    try {
+      const { error } = await supabase.from('categories').update(payload).eq('id', id);
+      if (error) {
+        console.warn('[SUPABASE UPDATE CATEGORY NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Category update failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Category update failed');
     }
   }
-
-  try {
-    const docRef = doc(db, 'categories', id);
-    const { id: _, ...rest } = category;
-    await updateDoc(docRef, removeUndefinedFields({ ...rest, updatedAt: new Date().toISOString() }));
-  } catch (e) {}
 }
 
 export async function deleteCategory(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const { error } = await supabase.from('categories').delete().eq('id', id);
-    if (error) {
-      console.error('[SUPABASE DELETE CATEGORY ERROR]', error);
-      throw new Error(`Category delete failed: ${error.message}`);
-    }
-  }
-
+  let fsSuccess = false;
   try {
     await deleteDoc(doc(db, 'categories', id));
+    fsSuccess = true;
   } catch (e) {}
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from('categories').delete().eq('id', id);
+      if (error) {
+        console.warn('[SUPABASE DELETE CATEGORY NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Category delete failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Category delete failed');
+    }
+  }
 }
 
 // ================= APKS =================
 export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> {
-  if (!isSupabaseConfigured()) {
-    throw new Error('Supabase client is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment.');
-  }
-
   const now = new Date().toISOString();
   
   let safeId = apk.id;
@@ -621,51 +637,87 @@ export async function upsertSupabaseApk(apk: Partial<ApkItem>): Promise<string> 
     modFeaturesStr = 'Premium Unlocked, VIP MOD';
   }
 
-  const payload = removeUndefinedFields({
-    id: safeId,
-    title: title,
-    category: category,
-    category_id: apk.categoryId || '',
-    version: apk.version || '1.0.0',
-    android_requirement: apk.androidVersion || '7.0+',
-    package_name: packageName,
-    file_size: apk.size || apk.apkFileSize || '45 MB',
-    icon_url: iconUrl,
-    apk_url: apkUrl,
-    external_download_url: externalUrl,
-    description: apk.description || '',
-    mod_features: modFeaturesStr,
-    changelog: apk.changelog || 'Initial release',
-    screenshots: screenshots,
-    price: apk.price || 0,
-    currency: apk.currency || 'INR',
-    access_duration: apk.accessDuration || '30 Days',
-    start_date: apk.startDate || now,
-    expiry_date: apk.expiryDate || null,
-    free_download: isFree,
-    featured_vip: isFeatured,
-    active_visible: isActive,
-    download_count: apk.downloadsCount || 0,
-    created_at: apk.createdAt || now,
-    updated_at: now
-  });
-
-  console.log(`[SUPABASE SAVE] Inserting/updating record "${safeId}" into public.apks...`, payload);
-  const { data, error } = await supabase
-    .from('apks')
-    .upsert(payload, { onConflict: 'id' })
-    .select();
-
-  if (error) {
-    console.error('[SUPABASE SAVE ERROR]', error);
-    let formattedError = error.message || error.details || error.hint || String(error);
-    if (error.code === 'PGRST205' || formattedError.includes('schema cache') || formattedError.includes('not found')) {
-      formattedError = "Could not find the table 'public.apks' in Supabase. Please run the SQL migration script in your Supabase SQL Editor.";
-    }
-    throw new Error(`Database save failed: ${formattedError}`);
+  // 1. Save to Firestore for instant fallback availability
+  let fsSuccess = false;
+  try {
+    await setDoc(doc(db, 'apks', safeId), removeUndefinedFields({
+      ...apk,
+      id: safeId,
+      name: title,
+      title: title,
+      category: category,
+      categoryName: category,
+      packageName: packageName,
+      package_name: packageName,
+      icon: iconUrl,
+      iconUrl: iconUrl,
+      downloadUrl: apkUrl || externalUrl,
+      apkFilePath: apkUrl,
+      externalDownloadUrl: externalUrl,
+      screenshots: screenshots,
+      createdAt: apk.createdAt || now,
+      updatedAt: now,
+      isActive: isActive
+    }), { merge: true });
+    fsSuccess = true;
+  } catch (fsErr) {
+    console.warn('Firestore save apk notice:', fsErr);
   }
 
-  console.log('[SUPABASE SAVE SUCCESS]', data?.[0] || safeId);
+  // 2. Save to Supabase if configured
+  if (isSupabaseConfigured()) {
+    const payload = removeUndefinedFields({
+      id: safeId,
+      title: title,
+      category: category,
+      category_id: apk.categoryId || '',
+      version: apk.version || '1.0.0',
+      android_requirement: apk.androidVersion || '7.0+',
+      package_name: packageName,
+      file_size: apk.size || apk.apkFileSize || '45 MB',
+      icon_url: iconUrl,
+      apk_url: apkUrl,
+      external_download_url: externalUrl,
+      description: apk.description || '',
+      mod_features: modFeaturesStr,
+      changelog: apk.changelog || 'Initial release',
+      screenshots: screenshots,
+      price: apk.price || 0,
+      currency: apk.currency || 'INR',
+      access_duration: apk.accessDuration || '30 Days',
+      start_date: apk.startDate || now,
+      expiry_date: apk.expiryDate || null,
+      free_download: isFree,
+      featured_vip: isFeatured,
+      active_visible: isActive,
+      download_count: apk.downloadsCount || 0,
+      created_at: apk.createdAt || now,
+      updated_at: now
+    });
+
+    try {
+      const { data, error } = await supabase
+        .from('apks')
+        .upsert(payload, { onConflict: 'id' })
+        .select();
+
+      if (error) {
+        console.warn('[SUPABASE SAVE APK NOTICE]', error.message);
+        if (error.code === 'PGRST205' || error.message.includes('schema cache') || error.message.includes('not found')) {
+          console.warn("Could not find table 'public.apks' in Supabase. Run /supabase/schema.sql in Supabase SQL Editor.");
+        } else if (!fsSuccess) {
+          throw new Error(`Database save failed: ${error.message}`);
+        }
+      } else {
+        console.log('[SUPABASE SAVE SUCCESS]', data?.[0] || safeId);
+      }
+    } catch (sbErr: any) {
+      if (!fsSuccess) {
+        throw new Error(sbErr?.message || 'Database save failed');
+      }
+    }
+  }
+
   return safeId;
 }
 
@@ -915,7 +967,7 @@ export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => v
 
   const q = query(collection(db, 'plans'), where('apkId', '==', apkId));
   const fsUnsub = onSnapshot(q, (snap) => {
-    if (isSubscribed && snap.docs.length > 0) {
+    if (isSubscribed) {
       const list: PlanItem[] = [];
       snap.forEach(docSnap => list.push(mapRowToPlan({ id: docSnap.id, ...docSnap.data() })));
       list.sort((a, b) => a.price - b.price);
@@ -961,6 +1013,21 @@ export async function addPlan(plan: Omit<PlanItem, 'id'>): Promise<string> {
   const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `plan_${Date.now()}`;
   const now = new Date().toISOString();
 
+  // 1. Dual-write to Firestore for instant fallback availability
+  let fsSuccess = false;
+  try {
+    await setDoc(doc(db, 'plans', safeId), removeUndefinedFields({
+      ...plan,
+      id: safeId,
+      createdAt: now,
+      updatedAt: now
+    }));
+    fsSuccess = true;
+  } catch (e) {
+    console.warn('Firestore add plan notice:', e);
+  }
+
+  // 2. Dual-write to Supabase if configured
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
       id: safeId,
@@ -973,21 +1040,36 @@ export async function addPlan(plan: Omit<PlanItem, 'id'>): Promise<string> {
       updated_at: now
     });
 
-    const { error } = await supabase.from('plans').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.error('[SUPABASE ADD PLAN ERROR]', error);
-      throw new Error(`Plan add failed: ${error.message}`);
+    try {
+      const { error } = await supabase.from('plans').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.warn('[SUPABASE ADD PLAN NOTICE]', error.message);
+        if (error.code === 'PGRST205' || error.message.includes('schema cache') || error.message.includes('not found')) {
+          console.warn(`[SUPABASE MIGRATION REQUIRED] Table 'public.plans' was not found in Supabase. Please run '/supabase/schema.sql' in your Supabase SQL Editor.`);
+        } else if (!fsSuccess) {
+          throw new Error(`Plan add failed: ${error.message}`);
+        }
+      }
+    } catch (sbErr: any) {
+      if (!fsSuccess) {
+        throw new Error(sbErr?.message || 'Plan add failed');
+      }
     }
   }
-
-  try {
-    await addDoc(collection(db, 'plans'), removeUndefinedFields(plan));
-  } catch (e) {}
 
   return safeId;
 }
 
 export async function updatePlan(id: string, plan: Partial<PlanItem>): Promise<void> {
+  const now = new Date().toISOString();
+  let fsSuccess = false;
+
+  try {
+    const { id: _, ...rest } = plan;
+    await setDoc(doc(db, 'plans', id), removeUndefinedFields({ ...rest, updatedAt: now }), { merge: true });
+    fsSuccess = true;
+  } catch (e) {}
+
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
       id,
@@ -996,20 +1078,19 @@ export async function updatePlan(id: string, plan: Partial<PlanItem>): Promise<v
       duration_days: plan.durationDays !== undefined ? Number(plan.durationDays) : undefined,
       price: plan.price !== undefined ? Number(plan.price) : undefined,
       active: plan.active,
-      updated_at: new Date().toISOString()
+      updated_at: now
     });
 
-    const { error } = await supabase.from('plans').update(payload).eq('id', id);
-    if (error) {
-      console.error('[SUPABASE UPDATE PLAN ERROR]', error);
-      throw new Error(`Plan update failed: ${error.message}`);
+    try {
+      const { error } = await supabase.from('plans').update(payload).eq('id', id);
+      if (error) {
+        console.warn('[SUPABASE UPDATE PLAN NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Plan update failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Plan update failed');
     }
   }
-
-  try {
-    const { id: _, ...rest } = plan;
-    await updateDoc(doc(db, 'plans', id), removeUndefinedFields(rest));
-  } catch (e) {}
 }
 
 export async function deletePlan(id: string): Promise<void> {
@@ -1018,18 +1099,24 @@ export async function deletePlan(id: string): Promise<void> {
   }
 
   const cleanId = id.trim();
-
-  if (isSupabaseConfigured()) {
-    const { error } = await supabase.from('plans').delete().eq('id', cleanId);
-    if (error) {
-      console.error('[SUPABASE DELETE PLAN ERROR]', error);
-      throw new Error(`Plan deletion failed: ${error.message}`);
-    }
-  }
+  let fsSuccess = false;
 
   try {
     await deleteDoc(doc(db, 'plans', cleanId));
+    fsSuccess = true;
   } catch (e) {}
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from('plans').delete().eq('id', cleanId);
+      if (error) {
+        console.warn('[SUPABASE DELETE PLAN NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Plan deletion failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Plan deletion failed');
+    }
+  }
 }
 
 // ================= COUPONS =================
@@ -1162,6 +1249,18 @@ export async function validateCoupon(code: string, amount: number, userId?: stri
 export async function addCoupon(coupon: Omit<Coupon, 'id' | 'usedCount' | 'createdAt'>): Promise<string> {
   const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `coupon_${Date.now()}`;
   const now = new Date().toISOString();
+  let fsSuccess = false;
+
+  try {
+    await setDoc(doc(db, 'coupons', safeId), removeUndefinedFields({
+      ...coupon,
+      id: safeId,
+      code: coupon.code.toUpperCase().trim(),
+      usedCount: 0,
+      createdAt: now
+    }));
+    fsSuccess = true;
+  } catch (e) {}
 
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
@@ -1180,26 +1279,32 @@ export async function addCoupon(coupon: Omit<Coupon, 'id' | 'usedCount' | 'creat
       updated_at: now
     });
 
-    const { error } = await supabase.from('coupons').upsert(payload, { onConflict: 'id' });
-    if (error) {
-      console.error('[SUPABASE ADD COUPON ERROR]', error);
-      throw new Error(`Coupon add failed: ${error.message}`);
+    try {
+      const { error } = await supabase.from('coupons').upsert(payload, { onConflict: 'id' });
+      if (error) {
+        console.warn('[SUPABASE ADD COUPON NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Coupon add failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Coupon add failed');
     }
   }
-
-  try {
-    await addDoc(collection(db, 'coupons'), removeUndefinedFields({
-      ...coupon,
-      code: coupon.code.toUpperCase().trim(),
-      usedCount: 0,
-      createdAt: now
-    }));
-  } catch (e) {}
 
   return safeId;
 }
 
 export async function updateCoupon(id: string, coupon: Partial<Coupon>): Promise<void> {
+  const now = new Date().toISOString();
+  let fsSuccess = false;
+
+  try {
+    const { id: _, ...rest } = coupon;
+    const data: any = { ...rest, updatedAt: now };
+    if (data.code) data.code = data.code.toUpperCase().trim();
+    await setDoc(doc(db, 'coupons', id), removeUndefinedFields(data), { merge: true });
+    fsSuccess = true;
+  } catch (e) {}
+
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
       id,
@@ -1213,36 +1318,39 @@ export async function updateCoupon(id: string, coupon: Partial<Coupon>): Promise
       used_count: coupon.usedCount,
       per_user_limit: coupon.perUserLimit,
       active: coupon.active,
-      updated_at: new Date().toISOString()
+      updated_at: now
     });
 
-    const { error } = await supabase.from('coupons').update(payload).eq('id', id);
-    if (error) {
-      console.error('[SUPABASE UPDATE COUPON ERROR]', error);
-      throw new Error(`Coupon update failed: ${error.message}`);
+    try {
+      const { error } = await supabase.from('coupons').update(payload).eq('id', id);
+      if (error) {
+        console.warn('[SUPABASE UPDATE COUPON NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Coupon update failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Coupon update failed');
     }
   }
-
-  try {
-    const { id: _, ...rest } = coupon;
-    const data: any = { ...rest };
-    if (data.code) data.code = data.code.toUpperCase().trim();
-    await updateDoc(doc(db, 'coupons', id), removeUndefinedFields(data));
-  } catch (e) {}
 }
 
 export async function deleteCoupon(id: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const { error } = await supabase.from('coupons').delete().eq('id', id);
-    if (error) {
-      console.error('[SUPABASE DELETE COUPON ERROR]', error);
-      throw new Error(`Coupon deletion failed: ${error.message}`);
-    }
-  }
-
+  let fsSuccess = false;
   try {
     await deleteDoc(doc(db, 'coupons', id));
+    fsSuccess = true;
   } catch (e) {}
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { error } = await supabase.from('coupons').delete().eq('id', id);
+      if (error) {
+        console.warn('[SUPABASE DELETE COUPON NOTICE]', error.message);
+        if (!fsSuccess) throw new Error(`Coupon deletion failed: ${error.message}`);
+      }
+    } catch (e: any) {
+      if (!fsSuccess) throw new Error(e?.message || 'Coupon deletion failed');
+    }
+  }
 }
 
 // ================= ORDERS & PURCHASES =================

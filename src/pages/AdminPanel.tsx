@@ -978,16 +978,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
               <button
                 onClick={async () => {
                   if (!newPlanData.name) return;
-                  await addPlan({
-                    apkId: selectedApkForPlans.id,
-                    name: newPlanData.name,
-                    durationDays: newPlanData.durationDays,
-                    price: newPlanData.price,
-                    active: true
-                  });
-                  setNewPlanData({ name: '30 Days Access', durationDays: 30, price: 99 });
+                  try {
+                    await addPlan({
+                      apkId: selectedApkForPlans.id,
+                      name: newPlanData.name,
+                      durationDays: newPlanData.durationDays,
+                      price: newPlanData.price,
+                      active: true
+                    });
+                    setNewPlanData({ name: '30 Days Access', durationDays: 30, price: 99 });
+                  } catch (err: any) {
+                    alert(err?.message || 'Failed to add plan');
+                  }
                 }}
-                className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs py-2 rounded-xl transition"
+                className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs py-2 rounded-xl transition cursor-pointer"
               >
                 Add Plan
               </button>
