@@ -97,6 +97,15 @@ function MainLayout() {
     };
   }, []);
 
+  useEffect(() => {
+    if (selectedApk && apks.length > 0) {
+      const updated = apks.find(a => a.id === selectedApk.id);
+      if (updated) {
+        setSelectedApk(updated);
+      }
+    }
+  }, [apks]);
+
   const handleNavigate = (tab: string, param?: string) => {
     setCurrentTab(tab);
     if (tab === 'categories' && param) {

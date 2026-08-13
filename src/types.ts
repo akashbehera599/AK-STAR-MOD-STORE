@@ -86,8 +86,11 @@ export interface PlanItem {
   apkId: string;
   name: string; // e.g., "30 Days Access"
   durationDays: number;
+  durationUnit?: string; // e.g. "days"
   price: number; // in INR e.g. 99
   active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Coupon {

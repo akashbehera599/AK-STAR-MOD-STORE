@@ -178,12 +178,15 @@ export function mapRowToCategory(row: any): Category {
 
 export function mapRowToPlan(row: any): PlanItem {
   return {
-    id: String(row.id),
+    id: String(row.id || ''),
     apkId: String(row.apk_id || row.apkId || ''),
     name: row.name || 'Access Plan',
     durationDays: Number(row.duration_days || row.durationDays || 30),
-    price: Number(row.price || 0),
-    active: row.active !== undefined ? Boolean(row.active) : true
+    durationUnit: row.duration_unit || row.durationUnit || 'days',
+    price: Number(row.price !== undefined && row.price !== null ? row.price : 0),
+    active: row.active !== undefined ? Boolean(row.active) : true,
+    createdAt: row.created_at || row.createdAt || undefined,
+    updatedAt: row.updated_at || row.updatedAt || undefined
   };
 }
 
@@ -933,7 +936,46 @@ export async function deleteApk(id: string): Promise<void> {
 
 // ================= PLANS =================
 export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => void): Unsubscribe {
+  if (!apkId) {
+    callback([]);
+    return () => {};
+  }
+
   let isSubscribed = true;
+  let sbPlans: PlanItem[] = [];
+  let fsPlans: PlanItem[] = [];
+
+  const emitCombined = () => {
+    if (!isSubscribed) return;
+    const map = new Map<string, PlanItem>();
+
+    for (const p of fsPlans) {
+      if (p && p.id && p.apkId === apkId) {
+        map.set(p.id, p);
+      }
+    }
+
+    for (const p of sbPlans) {
+      if (p && p.id && p.apkId === apkId) {
+        const existing = map.get(p.id);
+        if (existing) {
+          map.set(p.id, {
+            ...existing,
+            ...p,
+            price: p.price !== undefined && p.price !== null ? p.price : existing.price,
+            name: p.name || existing.name,
+            durationDays: p.durationDays || existing.durationDays,
+            active: p.active !== undefined ? p.active : existing.active
+          });
+        } else {
+          map.set(p.id, p);
+        }
+      }
+    }
+
+    const combined = Array.from(map.values()).sort((a, b) => a.price - b.price);
+    callback(combined);
+  };
 
   const loadFromSupabase = async () => {
     if (!isSupabaseConfigured() || !apkId) return;
@@ -944,11 +986,13 @@ export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => v
         .eq('apk_id', apkId)
         .order('price', { ascending: true });
 
-      if (!error && data && isSubscribed) {
-        callback(data.map(mapRowToPlan));
-        return;
+      if (!error && data) {
+        sbPlans = data.map(mapRowToPlan);
+        emitCombined();
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn('[SUPABASE SUBSCRIBE PLANS NOTICE]', err);
+    }
   };
 
   loadFromSupabase();
@@ -970,10 +1014,12 @@ export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => v
     if (isSubscribed) {
       const list: PlanItem[] = [];
       snap.forEach(docSnap => list.push(mapRowToPlan({ id: docSnap.id, ...docSnap.data() })));
-      list.sort((a, b) => a.price - b.price);
-      callback(list);
+      fsPlans = list;
+      emitCombined();
     }
-  }, () => {});
+  }, (err) => {
+    console.warn('[FIRESTORE SUBSCRIBE PLANS ERROR]', err);
+  });
 
   return () => {
     isSubscribed = false;
@@ -983,7 +1029,11 @@ export function subscribePlans(apkId: string, callback: (plans: PlanItem[]) => v
 }
 
 export async function getPlansForApk(apkId: string): Promise<PlanItem[]> {
-  if (isSupabaseConfigured() && apkId) {
+  if (!apkId) return [];
+
+  const map = new Map<string, PlanItem>();
+
+  if (isSupabaseConfigured()) {
     try {
       const { data, error } = await supabase
         .from('plans')
@@ -991,36 +1041,63 @@ export async function getPlansForApk(apkId: string): Promise<PlanItem[]> {
         .eq('apk_id', apkId)
         .order('price', { ascending: true });
 
-      if (!error && data) {
-        return data.map(mapRowToPlan);
+      if (!error && data && data.length > 0) {
+        data.map(mapRowToPlan).forEach(p => {
+          if (p.id) map.set(p.id, p);
+        });
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn('[GET PLANS SUPABASE NOTICE]', err);
+    }
   }
 
   try {
     const q = query(collection(db, 'plans'), where('apkId', '==', apkId));
     const snap = await getDocs(q);
-    const list: PlanItem[] = [];
-    snap.forEach(docSnap => list.push(mapRowToPlan({ id: docSnap.id, ...docSnap.data() })));
-    list.sort((a, b) => a.price - b.price);
-    return list;
+    snap.forEach(docSnap => {
+      const p = mapRowToPlan({ id: docSnap.id, ...docSnap.data() });
+      if (p.id) {
+        if (!map.has(p.id)) {
+          map.set(p.id, p);
+        } else {
+          const existing = map.get(p.id)!;
+          map.set(p.id, {
+            ...p,
+            ...existing,
+            price: existing.price !== undefined ? existing.price : p.price
+          });
+        }
+      }
+    });
   } catch (e) {
-    return [];
+    console.warn('[GET PLANS FIRESTORE NOTICE]', e);
   }
+
+  const list = Array.from(map.values()).sort((a, b) => a.price - b.price);
+  return list;
 }
 
 export async function addPlan(plan: Omit<PlanItem, 'id'>): Promise<string> {
   const safeId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `plan_${Date.now()}`;
   const now = new Date().toISOString();
 
+  const planObj: PlanItem = {
+    id: safeId,
+    apkId: String(plan.apkId),
+    name: plan.name ? plan.name.trim() : '30 Days Access',
+    durationDays: Number(plan.durationDays || 30),
+    durationUnit: plan.durationUnit || 'days',
+    price: Number(plan.price !== undefined ? plan.price : 0),
+    active: plan.active !== false,
+    createdAt: plan.createdAt || now,
+    updatedAt: now
+  };
+
   // 1. Dual-write to Firestore for instant fallback availability
   let fsSuccess = false;
   try {
     await setDoc(doc(db, 'plans', safeId), removeUndefinedFields({
-      ...plan,
-      id: safeId,
-      createdAt: now,
-      updatedAt: now
+      ...planObj
     }));
     fsSuccess = true;
   } catch (e) {
@@ -1031,13 +1108,14 @@ export async function addPlan(plan: Omit<PlanItem, 'id'>): Promise<string> {
   if (isSupabaseConfigured()) {
     const payload = removeUndefinedFields({
       id: safeId,
-      apk_id: plan.apkId,
-      name: plan.name.trim(),
-      duration_days: Number(plan.durationDays || 30),
-      price: Number(plan.price || 0),
-      active: plan.active !== false,
-      created_at: now,
-      updated_at: now
+      apk_id: planObj.apkId,
+      name: planObj.name,
+      duration_days: planObj.durationDays,
+      duration_unit: planObj.durationUnit,
+      price: planObj.price,
+      active: planObj.active,
+      created_at: planObj.createdAt,
+      updated_at: planObj.updatedAt
     });
 
     try {

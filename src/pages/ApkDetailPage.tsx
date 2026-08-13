@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Star, Download, ShieldCheck, Sparkles, Smartphone, Check, 
-  ArrowLeft, Tag, Calendar, Layers, Clock, AlertCircle, Info, Lock
+  ArrowLeft, Tag, Calendar, Layers, Clock, AlertCircle, Info, Lock, RefreshCw
 } from 'lucide-react';
 import { ApkItem, PlanItem, Purchase } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { checkApkAccess, getPlansForApk, validateCoupon } from '../services/db';
+import { checkApkAccess, subscribePlans, validateCoupon } from '../services/db';
 import { getSignedDownloadUrl, getStoragePublicUrl } from '../services/storage';
 import { BUCKETS } from '../lib/supabase';
 import { ReviewSection } from '../components/ReviewSection';
@@ -33,30 +33,44 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
 
   useEffect(() => {
     let isMounted = true;
-    async function loadData() {
-      setLoadingPlans(true);
-      try {
-        const fetchedPlans = await getPlansForApk(apk.id);
-        if (isMounted) {
-          setPlans(fetchedPlans);
-          if (fetchedPlans.length > 0) {
-            setSelectedPlan(fetchedPlans[0]);
-          }
-        }
+    setLoadingPlans(true);
 
+    const unsubPlans = subscribePlans(apk.id, (fetchedPlans) => {
+      if (!isMounted) return;
+      const activePlans = fetchedPlans.filter(p => p.active !== false);
+      setPlans(activePlans);
+
+      setSelectedPlan(prevSelected => {
+        if (!prevSelected) {
+          return activePlans.length > 0 ? activePlans[0] : null;
+        }
+        const updated = activePlans.find(p => p.id === prevSelected.id);
+        if (updated) {
+          return updated;
+        }
+        return activePlans.length > 0 ? activePlans[0] : null;
+      });
+
+      setLoadingPlans(false);
+    });
+
+    async function loadAccess() {
+      try {
         const access = await checkApkAccess(user?.uid, apk.id);
         if (isMounted) {
           setUserAccess(access);
         }
       } catch (err) {
-        console.error('Error loading apk details:', err);
-      } finally {
-        if (isMounted) setLoadingPlans(false);
+        console.error('Error checking user access:', err);
       }
     }
 
-    loadData();
-    return () => { isMounted = false; };
+    loadAccess();
+
+    return () => {
+      isMounted = false;
+      unsubPlans();
+    };
   }, [apk.id, user?.uid]);
 
   const handleApplyCoupon = async () => {
@@ -215,6 +229,10 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
               <div className="text-xs text-zinc-400">
                 No subscription required for this app.
               </div>
+            ) : loadingPlans ? (
+              <div className="text-xs text-amber-400 flex items-center gap-1.5 font-medium animate-pulse">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading pricing plans...
+              </div>
             ) : selectedPlan ? (
               <div>
                 <span className="text-xs text-zinc-400">Payable Amount: </span>
@@ -229,7 +247,8 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
           <button
             id="btn-apk-detail-action"
             onClick={handleBuyClick}
-            className="w-full sm:w-auto bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-extrabold text-sm px-8 py-3.5 rounded-2xl shadow-xl shadow-amber-500/20 transition active:scale-95 flex items-center justify-center gap-2"
+            disabled={loadingPlans || (!apk.isFree && !userAccess.hasAccess && !selectedPlan)}
+            className="w-full sm:w-auto bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-extrabold text-sm px-8 py-3.5 rounded-2xl shadow-xl shadow-amber-500/20 transition active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
           >
             {userAccess.hasAccess ? (
               <>
@@ -239,13 +258,21 @@ export const ApkDetailPage: React.FC<ApkDetailPageProps> = ({
               <>
                 <Download className="w-5 h-5" /> FREE DOWNLOAD
               </>
+            ) : loadingPlans ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" /> LOADING PRICE...
+              </>
             ) : !user ? (
               <>
-                <Lock className="w-4 h-4" /> SIGN IN TO BUY (₹{finalPrice})
+                <Lock className="w-4 h-4" /> SIGN IN TO BUY (₹{selectedPlan ? finalPrice : '...'})
+              </>
+            ) : selectedPlan ? (
+              <>
+                <Sparkles className="w-5 h-5 fill-zinc-950" /> BUY NOW (₹{finalPrice})
               </>
             ) : (
               <>
-                <Sparkles className="w-5 h-5 fill-zinc-950" /> BUY NOW (₹{finalPrice})
+                <AlertCircle className="w-4 h-4" /> NO PLAN AVAILABLE
               </>
             )}
           </button>
