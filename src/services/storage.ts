@@ -17,18 +17,19 @@ export interface UploadTaskHandler {
   promise: Promise<UploadTaskResult>;
 }
 
-export function formatStorageError(error: any): string {
+export function formatStorageError(error: any, bucketName?: string): string {
   if (!error) return 'An unknown storage error occurred.';
   const msg = error?.message || error?.error_description || String(error);
   
-  if (msg.includes('Bucket not found') || msg.includes('bucket_not_found') || msg.includes('not found')) {
-    return 'Supabase Storage bucket missing. Please ensure the target bucket exists in your Supabase project.';
+  if (msg.includes('Bucket not found') || msg.includes('bucket_not_found') || msg.includes('not found') || msg.includes('NoSuchBucket') || msg.includes('The resource was not found')) {
+    const targetBucket = bucketName || 'apk-files';
+    return `Storage bucket ${targetBucket} is missing. Create it in Supabase Storage.`;
   }
   if (msg.includes('Invalid path specified in request URL') || msg.includes('Invalid path') || msg.includes('invalid_path')) {
     return 'Invalid storage path specified in request URL. Please check file path format.';
   }
-  if (msg.includes('row-level security') || msg.includes('RLS') || msg.includes('403') || msg.includes('Unauthorized')) {
-    return 'Storage permission denied. Please verify your Supabase Storage RLS policies.';
+  if (msg.includes('row-level security') || msg.includes('RLS') || msg.includes('403') || msg.includes('Unauthorized') || msg.includes('permission denied')) {
+    return 'Storage permission denied. Please verify your Supabase Storage RLS policies for bucket.';
   }
   if (msg.includes('Payload too large') || msg.includes('413')) {
     return 'File size is too large for Supabase Storage limits.';
@@ -244,7 +245,7 @@ export function uploadFileWithTask(
 
       if (uploadResult.error) {
         console.error('[APK STORAGE RESULT] Error:', uploadResult.error);
-        const formatted = formatStorageError(uploadResult.error);
+        const formatted = formatStorageError(uploadResult.error, bucket);
         throw new Error(formatted);
       }
 
@@ -278,7 +279,7 @@ export function uploadFileWithTask(
       });
     } catch (err: any) {
       cleanup();
-      const formatted = formatStorageError(err);
+      const formatted = formatStorageError(err, bucket);
       reject(new Error(formatted));
     }
   });

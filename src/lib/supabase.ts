@@ -25,9 +25,9 @@ export const BUCKETS = {
   APK_FILES: 'apk-files',
   APP_IMAGES: 'app-images',
   APK_IMAGES: 'app-images',
-  APP_SCREENSHOTS: 'app-screenshots',
-  SCREENSHOTS: 'app-screenshots',
-  APK_SCREENSHOTS: 'app-screenshots',
+  SCREENSHOTS: 'screenshots',
+  APP_SCREENSHOTS: 'screenshots',
+  APK_SCREENSHOTS: 'screenshots',
   PAYMENT_PROOFS: 'payment-proofs',
   STORE_ASSETS: 'store-assets',
 } as const;

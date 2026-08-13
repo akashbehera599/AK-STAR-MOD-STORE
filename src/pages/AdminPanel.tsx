@@ -19,6 +19,7 @@ import {
   updateApk, updateCategory, updateCoupon, updatePlan, updateStoreSettings 
 } from '../services/db';
 import { ConfirmationModal } from '../components/ConfirmationModal';
+import { SupabaseHealthCheckPanel } from '../components/SupabaseHealthCheckPanel';
 
 interface AdminPanelProps {
   onNavigateHome: () => void;
@@ -408,6 +409,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onNavigateHome }) => {
       {/* DASHBOARD TAB */}
       {activeTab === 'dashboard' && (
         <div className="space-y-6">
+          <SupabaseHealthCheckPanel />
+
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-zinc-900/80 border border-zinc-800 p-4 rounded-2xl">
               <p className="text-[10px] uppercase font-bold text-zinc-500">Total Revenue</p>
